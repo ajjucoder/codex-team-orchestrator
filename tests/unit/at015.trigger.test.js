@@ -135,3 +135,54 @@ test('AT-015 trigger uses telemetry budget estimator by default when token_cost_
 
   server.store.close();
 });
+
+test('AT-015 trigger prefers DAG-ready role spawn strategy when available', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerTriggerTools(server);
+
+  server.registerTool('team_spawn', 'team_spawn.schema.json', (input) => ({
+    ok: true,
+    agent: {
+      agent_id: `agent_${input.role}`,
+      team_id: input.team_id,
+      role: input.role,
+      model: 'gpt-5-codex'
+    }
+  }));
+  server.registerTool('team_spawn_ready_roles', 'team_spawn_ready_roles.schema.json', (input) => ({
+    ok: true,
+    team_id: input.team_id,
+    role_candidates: ['reviewer', 'tester'],
+    spawned_count: 2,
+    spawned_agents: [
+      { agent_id: 'agent_reviewer', role: 'reviewer', model: 'gpt-5-codex' },
+      { agent_id: 'agent_tester', role: 'tester', model: 'gpt-5-codex' }
+    ],
+    errors: []
+  }));
+  server.registerTool('team_task_next', 'team_task_next.schema.json', () => ({
+    ok: true,
+    ready_count: 2,
+    tasks: [
+      { task_id: 'task_1', required_role: 'reviewer' },
+      { task_id: 'task_2', required_role: 'tester' }
+    ]
+  }));
+
+  const triggered = server.callTool('team_trigger', {
+    prompt: 'use agent teams run dag shaped staffing',
+    profile: 'default',
+    max_threads: 4
+  });
+
+  assert.equal(triggered.ok, true);
+  assert.equal(triggered.triggered, true);
+  assert.equal(triggered.orchestration.spawn_strategy, 'dag_ready_roles');
+  assert.deepEqual(triggered.orchestration.planned_roles, ['reviewer', 'tester']);
+  assert.equal(triggered.orchestration.spawned_count, 2);
+  assert.equal(triggered.orchestration.spawned_agents[0].role, 'reviewer');
+
+  server.store.close();
+});

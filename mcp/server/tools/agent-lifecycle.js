@@ -181,6 +181,78 @@ export function registerAgentLifecycleTools(server) {
     };
   });
 
+  server.registerTool('team_spawn_ready_roles', 'team_spawn_ready_roles.schema.json', (input) => {
+    const teamLookup = getTeamOrError(server, input.team_id);
+    if (teamLookup.error) {
+      return { ok: false, error: teamLookup.error };
+    }
+    if (!server.tools.has('team_task_next')) {
+      return { ok: false, error: 'team_task_next not registered' };
+    }
+
+    const team = teamLookup.team;
+    const existingAgents = server.store.listAgentsByTeam(input.team_id);
+    const capacity = Math.max(0, Number(team.max_threads ?? 0) - existingAgents.length);
+    if (capacity === 0) {
+      return {
+        ok: true,
+        team_id: input.team_id,
+        budget: 0,
+        ready_task_count: 0,
+        role_candidates: [],
+        spawned_count: 0,
+        spawned_agents: [],
+        errors: []
+      };
+    }
+
+    const budget = Math.min(input.max_new_agents ?? capacity, capacity, 6);
+    const readyTaskLimit = input.ready_task_limit ?? Math.min(100, Math.max(20, budget * 4));
+    const ready = server.callTool('team_task_next', {
+      team_id: input.team_id,
+      limit: readyTaskLimit
+    });
+    if (!ready.ok) {
+      return { ok: false, error: ready.error ?? 'team_task_next failed' };
+    }
+
+    const existingRoles = new Set(existingAgents.map((agent) => agent.role));
+    const roleCandidates = [];
+    for (const task of ready.tasks ?? []) {
+      const role = String(task.required_role ?? '');
+      if (!role || !isKnownRole(role)) continue;
+      if (existingRoles.has(role) || roleCandidates.includes(role)) continue;
+      roleCandidates.push(role);
+      if (roleCandidates.length >= budget) break;
+    }
+
+    const spawnedAgents = [];
+    const errors = [];
+    for (const role of roleCandidates) {
+      const spawned = server.callTool('team_spawn', { team_id: input.team_id, role });
+      if (spawned.ok && spawned.agent) {
+        spawnedAgents.push(spawned.agent);
+      } else {
+        errors.push(spawned.error ?? `failed to spawn role: ${role}`);
+      }
+    }
+
+    return {
+      ok: true,
+      team_id: input.team_id,
+      budget,
+      ready_task_count: Number(ready.ready_count ?? (ready.tasks?.length ?? 0)),
+      role_candidates: roleCandidates,
+      spawned_count: spawnedAgents.length,
+      spawned_agents: spawnedAgents.map((agent) => ({
+        agent_id: agent.agent_id,
+        role: agent.role,
+        model: agent.model
+      })),
+      errors
+    };
+  });
+
   server.registerTool('team_send', 'team_send.schema.json', (input) => {
     const teamLookup = getTeamOrError(server, input.team_id);
     if (teamLookup.error) {

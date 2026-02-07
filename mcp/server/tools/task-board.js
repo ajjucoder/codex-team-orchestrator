@@ -1,4 +1,5 @@
 import { newId } from '../ids.js';
+import { isKnownRole } from '../role-pack.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -80,6 +81,9 @@ export function registerTaskBoardTools(server) {
   server.registerTool('team_task_create', 'team_task_create.schema.json', (input) => {
     const guard = ensureTeamAndAgent(server, input.team_id);
     if (!guard.ok) return guard;
+    if (input.required_role !== undefined && !isKnownRole(input.required_role)) {
+      return { ok: false, error: `unknown required_role: ${input.required_role}` };
+    }
 
     const taskId = newId('task');
     const dependencyIds = normalizeDependencyIds(input.depends_on_task_ids ?? []);
@@ -91,6 +95,7 @@ export function registerTaskBoardTools(server) {
       team_id: input.team_id,
       title: input.title,
       description: input.description ?? '',
+      required_role: input.required_role ?? null,
       status: dependencyIds.length > 0 ? 'blocked' : 'todo',
       priority: input.priority,
       claimed_by: null,
@@ -139,6 +144,9 @@ export function registerTaskBoardTools(server) {
     if (!existing || existing.team_id !== input.team_id) {
       return { ok: false, error: `task not found: ${input.task_id}` };
     }
+    if (input.required_role !== undefined && !isKnownRole(input.required_role)) {
+      return { ok: false, error: `unknown required_role: ${input.required_role}` };
+    }
 
     const dependencyIds = input.depends_on_task_ids !== undefined
       ? normalizeDependencyIds(input.depends_on_task_ids)
@@ -160,6 +168,7 @@ export function registerTaskBoardTools(server) {
       patch: {
         status: input.status,
         description: input.description,
+        required_role: input.required_role,
         priority: input.priority
       }
     });

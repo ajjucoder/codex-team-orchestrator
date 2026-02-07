@@ -74,7 +74,7 @@ export function registerTriggerTools(server) {
     const estimatedParallelTasks = input.estimated_parallel_tasks ?? defaultEstimatedParallelTasks(taskSize);
     const budgetTokensRemaining = input.budget_tokens_remaining ??
       Number(policy?.budgets?.token_soft_limit ?? 12000);
-    const plannedRoles = rolesForThreadCount(
+    const plannedRoleHints = rolesForThreadCount(
       Math.min(estimatedParallelTasks, Number(team.max_threads ?? HARD_MAX_THREADS))
     );
 
@@ -82,6 +82,8 @@ export function registerTriggerTools(server) {
     const spawnErrors = [];
     const spawnedAgents = [];
     let budgetController = null;
+    let spawnStrategy = 'static_sequence';
+    let plannedRoles = rolesForThreadCount(recommendedThreads);
 
     if (server.tools.has('team_plan_fanout')) {
       const fanoutInput = {
@@ -89,7 +91,7 @@ export function registerTriggerTools(server) {
         task_size: taskSize,
         estimated_parallel_tasks: estimatedParallelTasks,
         budget_tokens_remaining: budgetTokensRemaining,
-        planned_roles: plannedRoles
+        planned_roles: plannedRoleHints
       };
       if (Number.isFinite(input.token_cost_per_agent) && input.token_cost_per_agent > 0) {
         fanoutInput.token_cost_per_agent = Number(input.token_cost_per_agent);
@@ -103,6 +105,7 @@ export function registerTriggerTools(server) {
           1,
           Math.min(Number(team.max_threads ?? HARD_MAX_THREADS), HARD_MAX_THREADS)
         );
+        plannedRoles = rolesForThreadCount(recommendedThreads);
       } else {
         spawnErrors.push(plan.error ?? 'team_plan_fanout failed');
       }
@@ -112,12 +115,39 @@ export function registerTriggerTools(server) {
       if (!server.tools.has('team_spawn')) {
         spawnErrors.push('team_spawn not registered; auto-spawn skipped');
       } else {
-        for (const role of rolesForThreadCount(recommendedThreads)) {
-          const spawned = server.callTool('team_spawn', { team_id: team.team_id, role });
-          if (spawned.ok && spawned.agent) {
-            spawnedAgents.push(spawned.agent);
+        let usedReadyRoleSpawn = false;
+        if (server.tools.has('team_spawn_ready_roles') && server.tools.has('team_task_next')) {
+          const roleShaped = server.callTool('team_spawn_ready_roles', {
+            team_id: team.team_id,
+            max_new_agents: recommendedThreads
+          });
+          if (roleShaped.ok) {
+            if (Array.isArray(roleShaped.role_candidates) && roleShaped.role_candidates.length > 0) {
+              usedReadyRoleSpawn = true;
+              spawnStrategy = 'dag_ready_roles';
+              plannedRoles = [...roleShaped.role_candidates];
+              for (const spawned of roleShaped.spawned_agents ?? []) {
+                spawnedAgents.push(spawned);
+              }
+              for (const error of roleShaped.errors ?? []) {
+                spawnErrors.push(error);
+              }
+            }
           } else {
-            spawnErrors.push(spawned.error ?? `failed to spawn role: ${role}`);
+            spawnErrors.push(roleShaped.error ?? 'team_spawn_ready_roles failed');
+          }
+        }
+
+        if (!usedReadyRoleSpawn) {
+          plannedRoles = rolesForThreadCount(recommendedThreads);
+          spawnStrategy = 'static_sequence';
+          for (const role of plannedRoles) {
+            const spawned = server.callTool('team_spawn', { team_id: team.team_id, role });
+            if (spawned.ok && spawned.agent) {
+              spawnedAgents.push(spawned.agent);
+            } else {
+              spawnErrors.push(spawned.error ?? `failed to spawn role: ${role}`);
+            }
           }
         }
       }
@@ -134,6 +164,8 @@ export function registerTriggerTools(server) {
         estimated_parallel_tasks: estimatedParallelTasks,
         recommended_threads: recommendedThreads,
         hard_cap: HARD_MAX_THREADS,
+        spawn_strategy: spawnStrategy,
+        planned_roles: plannedRoles,
         budget_controller: budgetController,
         spawned_count: spawnedAgents.length,
         spawned_agents: spawnedAgents.map((agent) => ({

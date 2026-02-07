@@ -4,6 +4,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { createServer } from '../../mcp/server/index.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
 import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
+import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 
 const dbPath = '.tmp/at006-int.sqlite';
 const logPath = '.tmp/at006-int.log';
@@ -202,6 +203,70 @@ test('AT-006 integration: optional policy model routing applies per role while p
   assert.equal(inherited.agent.model, 'gpt-5-codex');
   assert.equal(inherited.agent.metadata.model_source, 'session_inherited');
   assert.equal(inherited.agent.metadata.model_routing_applied, false);
+
+  server.store.close();
+});
+
+test('AT-006 integration: spawn-ready-roles uses DAG-ready required_role hints only', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const team = server.callTool('team_start', {
+    objective: 'dag shaped spawn',
+    profile: 'default',
+    max_threads: 4
+  });
+  const teamId = team.team.team_id;
+
+  const foundation = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'foundation',
+    priority: 1
+  }).task;
+  server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'blocked reviewer',
+    priority: 2,
+    required_role: 'reviewer',
+    depends_on_task_ids: [foundation.task_id]
+  });
+  server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'ready implementer',
+    priority: 3,
+    required_role: 'implementer'
+  });
+
+  const spawn1 = server.callTool('team_spawn_ready_roles', {
+    team_id: teamId,
+    max_new_agents: 4
+  });
+  assert.equal(spawn1.ok, true);
+  assert.deepEqual(spawn1.role_candidates, ['implementer']);
+  assert.equal(spawn1.spawned_count, 1);
+
+  const done = server.callTool('team_task_update', {
+    team_id: teamId,
+    task_id: foundation.task_id,
+    status: 'done',
+    expected_lock_version: foundation.lock_version
+  });
+  assert.equal(done.ok, true);
+
+  const spawn2 = server.callTool('team_spawn_ready_roles', {
+    team_id: teamId,
+    max_new_agents: 4
+  });
+  assert.equal(spawn2.ok, true);
+  assert.deepEqual(spawn2.role_candidates, ['reviewer']);
+  assert.equal(spawn2.spawned_count, 1);
+
+  const status = server.callTool('team_status', { team_id: teamId });
+  assert.equal(status.ok, true);
+  assert.equal(status.metrics.agents, 2);
 
   server.store.close();
 });

@@ -7,6 +7,7 @@
     "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" },
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "title": { "type": "string" },
+    "required_role": { "type": "string" },
     "depends_on_task_ids": {
       "type": "array",
       "items": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" }

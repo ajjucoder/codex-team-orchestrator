@@ -37,17 +37,52 @@ test('AT-007 create and list tasks', () => {
     team_id: teamId,
     title: 'Implement AT-007',
     description: 'lock-safe board',
+    required_role: 'implementer',
     priority: 2
   });
 
   assert.equal(created.ok, true);
   assert.match(created.task.task_id, /^task_/);
   assert.equal(created.task.lock_version, 0);
+  assert.equal(created.task.required_role, 'implementer');
 
   const listed = server.callTool('team_task_list', { team_id: teamId });
   assert.equal(listed.ok, true);
   assert.equal(listed.tasks.length, 1);
   assert.equal(listed.tasks[0].status, 'todo');
+  assert.equal(listed.tasks[0].required_role, 'implementer');
+
+  server.store.close();
+});
+
+test('AT-007 required_role must be a known role on create/update', () => {
+  const { server, teamId } = setup();
+
+  const invalidCreate = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'invalid role',
+    required_role: 'unknown-role',
+    priority: 2
+  });
+  assert.equal(invalidCreate.ok, false);
+  assert.match(invalidCreate.error, /unknown required_role/);
+
+  const created = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'valid',
+    required_role: 'tester',
+    priority: 2
+  });
+  assert.equal(created.ok, true);
+
+  const invalidUpdate = server.callTool('team_task_update', {
+    team_id: teamId,
+    task_id: created.task.task_id,
+    required_role: 'invalid-role',
+    expected_lock_version: created.task.lock_version
+  });
+  assert.equal(invalidUpdate.ok, false);
+  assert.match(invalidUpdate.error, /unknown required_role/);
 
   server.store.close();
 });

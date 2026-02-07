@@ -4,6 +4,7 @@ import { rmSync } from 'node:fs';
 import { createServer } from '../../mcp/server/index.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
 import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
+import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 
 const dbPath = '.tmp/at006-unit.sqlite';
 const logPath = '.tmp/at006-unit.log';
@@ -216,6 +217,55 @@ test('AT-006 team_send sends artifact delta for same summary', () => {
   assert.equal(second.delta_applied, true);
   assert.equal(second.message.payload.artifact_refs.length, 1);
   assert.equal(second.message.payload.artifact_refs[0].artifact_id, 'artifact_b');
+
+  server.store.close();
+});
+
+test('AT-006 team_spawn_ready_roles spawns only hinted roles from ready DAG tasks', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const team = server.callTool('team_start', {
+    objective: 'spawn from ready tasks',
+    max_threads: 4,
+    profile: 'default'
+  });
+  const teamId = team.team.team_id;
+
+  server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review plan',
+    required_role: 'reviewer',
+    priority: 1
+  });
+  server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'implement patch',
+    required_role: 'implementer',
+    priority: 2
+  });
+  server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'unhinted fallback',
+    priority: 3
+  });
+
+  const spawned = server.callTool('team_spawn_ready_roles', {
+    team_id: teamId,
+    max_new_agents: 3
+  });
+
+  assert.equal(spawned.ok, true);
+  assert.deepEqual(spawned.role_candidates, ['reviewer', 'implementer']);
+  assert.equal(spawned.spawned_count, 2);
+  assert.equal(spawned.spawned_agents.map((agent) => agent.role).sort().join(','), 'implementer,reviewer');
+
+  const status = server.callTool('team_status', { team_id: teamId });
+  assert.equal(status.ok, true);
+  assert.equal(status.metrics.agents, 2);
 
   server.store.close();
 });

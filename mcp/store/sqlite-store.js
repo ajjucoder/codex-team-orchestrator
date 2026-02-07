@@ -399,13 +399,14 @@ export class SqliteStore {
     this.runWithRetry(() => {
       this.db
         .prepare(
-          'INSERT INTO tasks(task_id, team_id, title, description, status, priority, claimed_by, lock_version, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO tasks(task_id, team_id, title, description, required_role, status, priority, claimed_by, lock_version, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )
         .run(
           task.task_id,
           task.team_id,
           task.title,
           task.description ?? '',
+          task.required_role ?? null,
           task.status,
           task.priority,
           task.claimed_by ?? null,
@@ -493,6 +494,7 @@ export class SqliteStore {
     const next = {
       status: patch.status ?? current.status,
       description: patch.description ?? current.description,
+      required_role: patch.required_role ?? current.required_role,
       priority: patch.priority ?? current.priority
     };
 
@@ -500,9 +502,18 @@ export class SqliteStore {
     this.runWithRetry(() => {
       const result = this.db
         .prepare(
-          'UPDATE tasks SET status = ?, description = ?, priority = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
+          'UPDATE tasks SET status = ?, description = ?, required_role = ?, priority = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
         )
-        .run(next.status, next.description, next.priority, nowIso(), team_id, task_id, expected_lock_version);
+        .run(
+          next.status,
+          next.description,
+          next.required_role ?? null,
+          next.priority,
+          nowIso(),
+          team_id,
+          task_id,
+          expected_lock_version
+        );
       changes = Number(result.changes || 0);
     });
 

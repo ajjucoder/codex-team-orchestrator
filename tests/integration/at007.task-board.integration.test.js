@@ -162,3 +162,37 @@ test('AT-007 integration: loser-cancel policy emits cancellation and removes bra
 
   server.store.close();
 });
+
+test('AT-007 integration: ready tasks preserve required_role hints for spawn shaping', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const team = server.callTool('team_start', { objective: 'required role hints', max_threads: 4 });
+  const teamId = team.team.team_id;
+
+  const reviewerTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review api contract',
+    priority: 1,
+    required_role: 'reviewer'
+  }).task;
+  const implementerTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'implement feature',
+    priority: 2,
+    required_role: 'implementer'
+  }).task;
+
+  const next = server.callTool('team_task_next', { team_id: teamId, limit: 10 });
+  assert.equal(next.ok, true);
+  assert.equal(next.tasks.length, 2);
+  assert.equal(next.tasks[0].task_id, reviewerTask.task_id);
+  assert.equal(next.tasks[0].required_role, 'reviewer');
+  assert.equal(next.tasks[1].task_id, implementerTask.task_id);
+  assert.equal(next.tasks[1].required_role, 'implementer');
+
+  server.store.close();
+});
