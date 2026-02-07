@@ -9,6 +9,7 @@ function parseArgs(argv) {
     if (arg === '--candidate') out.candidate = argv[i + 1];
     if (arg === '--eval-set') out.evalSetPath = argv[i + 1];
     if (arg === '--out') out.outputPath = argv[i + 1];
+    if (arg === '--mode') out.mode = argv[i + 1];
   }
   return out;
 }
@@ -18,6 +19,7 @@ const { report, output_path } = runBenchmark(args);
 
 console.log(`benchmark:baseline=${report.baseline}`);
 console.log(`benchmark:candidate=${report.candidate}`);
+console.log(`benchmark:mode=${report.benchmark_mode}`);
 console.log(`benchmark:median_tokens_baseline=${report.baseline_summary.median_tokens}`);
 console.log(`benchmark:median_tokens_candidate=${report.candidate_summary.median_tokens}`);
 console.log(`benchmark:median_quality_baseline=${report.baseline_summary.median_quality}`);

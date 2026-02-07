@@ -3,11 +3,20 @@
 Runs fixed evaluation scenarios to compare:
 - Baseline: `fixed-6`
 - Candidate: `adaptive`
+- Mode:
+  - `replay` (default): executes real orchestrator flows and scores via usage telemetry
+  - `synthetic`: legacy formula-based estimator
 
 ## Run
 
 ```bash
 ./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive
+```
+
+Use explicit mode/eval set:
+
+```bash
+./scripts/benchmark.sh --mode replay --eval-set benchmarks/replay-eval-set.json
 ```
 
 ## Pass Gate

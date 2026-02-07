@@ -6,7 +6,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 baseline="fixed-6"
 candidate="adaptive"
-eval_set="$REPO_ROOT/benchmarks/eval-set.json"
+mode="replay"
+eval_set="$REPO_ROOT/benchmarks/replay-eval-set.json"
 out=""
 
 while [[ $# -gt 0 ]]; do
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
       eval_set="$2"
       shift 2
       ;;
+    --mode)
+      mode="$2"
+      shift 2
+      ;;
     --out)
       out="$2"
       shift 2
@@ -34,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-args=("$REPO_ROOT/benchmarks/run-benchmark.mjs" --baseline "$baseline" --candidate "$candidate" --eval-set "$eval_set")
+args=("$REPO_ROOT/benchmarks/run-benchmark.mjs" --baseline "$baseline" --candidate "$candidate" --mode "$mode" --eval-set "$eval_set")
 if [[ -n "$out" ]]; then
   args+=(--out "$out")
 fi

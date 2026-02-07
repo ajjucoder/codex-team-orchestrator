@@ -11,10 +11,15 @@ test('AT-017 integration: benchmark script emits pass gate and report artifact',
     'fixed-6',
     '--candidate',
     'adaptive',
+    '--mode',
+    'replay',
+    '--eval-set',
+    'benchmarks/replay-eval-set.json',
     '--out',
     outputPath
   ], { encoding: 'utf8' });
 
   assert.match(output, /benchmark:pass=true/);
+  assert.match(output, /benchmark:mode=replay/);
   assert.equal(existsSync(outputPath), true);
 });

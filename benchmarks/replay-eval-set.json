@@ -1,0 +1,78 @@
+{
+  "name": "replay-eval-set-v1",
+  "quality_threshold": 0.95,
+  "cases": [
+    {
+      "id": "small-triage",
+      "profile": "fast",
+      "task_size": "small",
+      "estimated_parallel_tasks": 1,
+      "budget_tokens_remaining": 9000,
+      "token_cost_per_agent": 800,
+      "task_count": 4,
+      "layer_width": 1,
+      "kickoff_chars": 420,
+      "update_chars": 260
+    },
+    {
+      "id": "small-analysis",
+      "profile": "default",
+      "task_size": "small",
+      "estimated_parallel_tasks": 2,
+      "budget_tokens_remaining": 12000,
+      "token_cost_per_agent": 900,
+      "task_count": 5,
+      "layer_width": 2,
+      "kickoff_chars": 480,
+      "update_chars": 300
+    },
+    {
+      "id": "medium-feature",
+      "profile": "default",
+      "task_size": "medium",
+      "estimated_parallel_tasks": 4,
+      "budget_tokens_remaining": 20000,
+      "token_cost_per_agent": 1100,
+      "task_count": 8,
+      "layer_width": 3,
+      "kickoff_chars": 540,
+      "update_chars": 340
+    },
+    {
+      "id": "medium-review",
+      "profile": "deep",
+      "task_size": "medium",
+      "estimated_parallel_tasks": 3,
+      "budget_tokens_remaining": 22000,
+      "token_cost_per_agent": 1200,
+      "task_count": 9,
+      "layer_width": 3,
+      "kickoff_chars": 560,
+      "update_chars": 360
+    },
+    {
+      "id": "high-refactor",
+      "profile": "deep",
+      "task_size": "high",
+      "estimated_parallel_tasks": 6,
+      "budget_tokens_remaining": 36000,
+      "token_cost_per_agent": 1500,
+      "task_count": 12,
+      "layer_width": 4,
+      "kickoff_chars": 640,
+      "update_chars": 420
+    },
+    {
+      "id": "high-integration",
+      "profile": "default",
+      "task_size": "high",
+      "estimated_parallel_tasks": 5,
+      "budget_tokens_remaining": 30000,
+      "token_cost_per_agent": 1400,
+      "task_count": 11,
+      "layer_width": 4,
+      "kickoff_chars": 620,
+      "update_chars": 400
+    }
+  ]
+}
