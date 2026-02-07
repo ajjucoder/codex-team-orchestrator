@@ -512,6 +512,82 @@ export class SqliteStore {
     return rows.map((row) => ({ ...row, payload: parseJSON(row.payload_json) }));
   }
 
+  listUsageSamples(teamId, limit = 200) {
+    const rows = this.db
+      .prepare(
+        `SELECT id, team_id, agent_id, payload_json, created_at
+         FROM run_events
+         WHERE team_id = ? AND event_type = 'usage_sample'
+         ORDER BY id DESC
+         LIMIT ?`
+      )
+      .all(teamId, limit);
+
+    return rows.map((row) => {
+      const payload = parseJSON(row.payload_json);
+      return {
+        id: row.id,
+        team_id: row.team_id,
+        agent_id: row.agent_id,
+        created_at: row.created_at,
+        tool_name: payload.tool_name ?? 'unknown',
+        role: payload.role ?? 'unknown',
+        estimated_tokens: Number(payload.estimated_tokens || 0),
+        latency_ms: Number(payload.latency_ms || 0),
+        input_tokens: Number(payload.input_tokens || 0),
+        output_tokens: Number(payload.output_tokens || 0)
+      };
+    });
+  }
+
+  summarizeUsage(teamId, limit = 500) {
+    const samples = this.listUsageSamples(teamId, limit);
+    const byRole = {};
+    const byTool = {};
+
+    let tokenSum = 0;
+    let latencySum = 0;
+    for (const sample of samples) {
+      tokenSum += sample.estimated_tokens;
+      latencySum += sample.latency_ms;
+
+      if (!byRole[sample.role]) {
+        byRole[sample.role] = { samples: 0, estimated_tokens: 0, latency_ms: 0 };
+      }
+      byRole[sample.role].samples += 1;
+      byRole[sample.role].estimated_tokens += sample.estimated_tokens;
+      byRole[sample.role].latency_ms += sample.latency_ms;
+
+      if (!byTool[sample.tool_name]) {
+        byTool[sample.tool_name] = { samples: 0, estimated_tokens: 0, latency_ms: 0 };
+      }
+      byTool[sample.tool_name].samples += 1;
+      byTool[sample.tool_name].estimated_tokens += sample.estimated_tokens;
+      byTool[sample.tool_name].latency_ms += sample.latency_ms;
+    }
+
+    const finalizeAverageMap = (map) => {
+      for (const key of Object.keys(map)) {
+        const entry = map[key];
+        entry.avg_estimated_tokens = entry.samples > 0
+          ? Math.round(entry.estimated_tokens / entry.samples)
+          : 0;
+        entry.avg_latency_ms = entry.samples > 0
+          ? Math.round(entry.latency_ms / entry.samples)
+          : 0;
+      }
+      return map;
+    };
+
+    return {
+      sample_count: samples.length,
+      avg_estimated_tokens: samples.length > 0 ? Math.round(tokenSum / samples.length) : 0,
+      avg_latency_ms: samples.length > 0 ? Math.round(latencySum / samples.length) : 0,
+      by_role: finalizeAverageMap(byRole),
+      by_tool: finalizeAverageMap(byTool)
+    };
+  }
+
   replayEvents(teamId, limit = 1000) {
     const rows = this.db
       .prepare('SELECT * FROM run_events WHERE team_id = ? ORDER BY id ASC LIMIT ?')
@@ -557,7 +633,8 @@ export class SqliteStore {
           done: Number(tasks.done || 0)
         },
         events
-      }
+      },
+      usage: this.summarizeUsage(teamId, 500)
     };
   }
 }

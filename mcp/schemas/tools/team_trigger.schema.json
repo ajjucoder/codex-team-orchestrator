@@ -5,7 +5,12 @@
     "prompt": { "type": "string" },
     "profile": { "type": "string", "enum": ["fast", "default", "deep"] },
     "max_threads": { "type": "integer", "minimum": 1, "maximum": 6 },
-    "active_session_model": { "type": "string" }
+    "active_session_model": { "type": "string" },
+    "task_size": { "type": "string", "enum": ["small", "medium", "high"] },
+    "auto_spawn": { "type": "boolean" },
+    "estimated_parallel_tasks": { "type": "integer", "minimum": 1 },
+    "budget_tokens_remaining": { "type": "integer", "minimum": 1 },
+    "token_cost_per_agent": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }

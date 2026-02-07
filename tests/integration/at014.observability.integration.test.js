@@ -41,6 +41,8 @@ test('AT-014 integration: replay returns ordered events and summary reflects act
   assert.equal(summary.ok, true);
   assert.equal(summary.summary.metrics.agents, 2);
   assert.equal(summary.summary.metrics.messages, 1);
+  assert.equal(summary.summary.usage.sample_count >= 3, true);
+  assert.equal(summary.summary.usage.by_tool.team_send.samples >= 1, true);
 
   const replay = server.callTool('team_replay', {
     team_id: teamId,

@@ -1,4 +1,38 @@
-import { hasAgentTeamsTrigger, extractObjectiveFromPrompt, REQUIRED_TRIGGER_PHRASE } from '../trigger.js';
+import {
+  hasAgentTeamsTrigger,
+  extractObjectiveFromPrompt,
+  inferTaskSizeFromPrompt,
+  REQUIRED_TRIGGER_PHRASE
+} from '../trigger.js';
+
+const HARD_MAX_THREADS = 6;
+const ROLE_SEQUENCE = ['implementer', 'reviewer', 'planner', 'tester', 'researcher', 'lead'];
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function defaultEstimatedParallelTasks(taskSize) {
+  if (taskSize === 'small') return 2;
+  if (taskSize === 'medium') return 4;
+  return 6;
+}
+
+function defaultTokenCost(taskSize) {
+  if (taskSize === 'small') return 900;
+  if (taskSize === 'medium') return 1100;
+  return 1500;
+}
+
+function fallbackRecommendedThreads(taskSize, teamMaxThreads) {
+  const base = defaultEstimatedParallelTasks(taskSize);
+  return clamp(base, 1, Math.min(Number(teamMaxThreads ?? HARD_MAX_THREADS), HARD_MAX_THREADS));
+}
+
+function rolesForThreadCount(count) {
+  const bounded = clamp(Number(count || 1), 1, HARD_MAX_THREADS);
+  return ROLE_SEQUENCE.slice(0, bounded);
+}
 
 export function registerTriggerTools(server) {
   server.registerTool('team_trigger', 'team_trigger.schema.json', (input) => {
@@ -31,12 +65,80 @@ export function registerTriggerTools(server) {
     const started = server.callTool('team_start', startInput, {
       active_session_model: input.active_session_model ?? null
     });
+    if (!started.ok) {
+      return {
+        ok: false,
+        triggered: true,
+        error: started.error ?? 'team_start failed'
+      };
+    }
+
+    const taskSize = input.task_size ?? inferTaskSizeFromPrompt(input.prompt);
+    const autoSpawnEnabled = input.auto_spawn ?? true;
+    const team = started.team;
+    const policy = server.policyEngine?.resolveTeamPolicy(team);
+    const estimatedParallelTasks = input.estimated_parallel_tasks ?? defaultEstimatedParallelTasks(taskSize);
+    const budgetTokensRemaining = input.budget_tokens_remaining ??
+      Number(policy?.budgets?.token_soft_limit ?? 12000);
+    const tokenCostPerAgent = input.token_cost_per_agent ?? defaultTokenCost(taskSize);
+
+    let recommendedThreads = fallbackRecommendedThreads(taskSize, team.max_threads);
+    const spawnErrors = [];
+    const spawnedAgents = [];
+
+    if (server.tools.has('team_plan_fanout')) {
+      const plan = server.callTool('team_plan_fanout', {
+        team_id: team.team_id,
+        task_size: taskSize,
+        estimated_parallel_tasks: estimatedParallelTasks,
+        budget_tokens_remaining: budgetTokensRemaining,
+        token_cost_per_agent: tokenCostPerAgent
+      });
+      if (plan.ok) {
+        recommendedThreads = clamp(
+          Number(plan.recommendation?.recommended_threads ?? recommendedThreads),
+          1,
+          Math.min(Number(team.max_threads ?? HARD_MAX_THREADS), HARD_MAX_THREADS)
+        );
+      } else {
+        spawnErrors.push(plan.error ?? 'team_plan_fanout failed');
+      }
+    }
+
+    if (autoSpawnEnabled) {
+      if (!server.tools.has('team_spawn')) {
+        spawnErrors.push('team_spawn not registered; auto-spawn skipped');
+      } else {
+        for (const role of rolesForThreadCount(recommendedThreads)) {
+          const spawned = server.callTool('team_spawn', { team_id: team.team_id, role });
+          if (spawned.ok && spawned.agent) {
+            spawnedAgents.push(spawned.agent);
+          } else {
+            spawnErrors.push(spawned.error ?? `failed to spawn role: ${role}`);
+          }
+        }
+      }
+    }
 
     return {
       ok: true,
       triggered: true,
       trigger_phrase: REQUIRED_TRIGGER_PHRASE,
-      team: started.team
+      team,
+      orchestration: {
+        task_size: taskSize,
+        auto_spawn_enabled: autoSpawnEnabled,
+        estimated_parallel_tasks: estimatedParallelTasks,
+        recommended_threads: recommendedThreads,
+        hard_cap: HARD_MAX_THREADS,
+        spawned_count: spawnedAgents.length,
+        spawned_agents: spawnedAgents.map((agent) => ({
+          agent_id: agent.agent_id,
+          role: agent.role,
+          model: agent.model
+        })),
+        errors: spawnErrors
+      }
     };
   });
 }

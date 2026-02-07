@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { createServer } from '../../mcp/server/index.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
+import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
+import { registerFanoutTools } from '../../mcp/server/tools/fanout.js';
 import { registerTriggerTools } from '../../mcp/server/tools/trigger.js';
 
 const dbPath = '.tmp/at015-int.sqlite';
@@ -30,6 +32,7 @@ test('AT-015 integration: trigger phrase creates orchestration team and logs inv
 
   assert.equal(triggered.ok, true);
   assert.equal(triggered.triggered, true);
+  assert.equal(triggered.orchestration.task_size, 'small');
 
   const status = server.callTool('team_status', { team_id: triggered.team.team_id });
   assert.equal(status.ok, true);
@@ -38,6 +41,34 @@ test('AT-015 integration: trigger phrase creates orchestration team and logs inv
   const logs = readFileSync(logPath, 'utf8');
   assert.match(logs, /tool_call:team_trigger/);
   assert.match(logs, /tool_call:team_start/);
+
+  server.store.close();
+});
+
+test('AT-015 integration: complexity-based trigger auto-spawns workers within cap', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerFanoutTools(server);
+  registerTriggerTools(server);
+
+  const triggered = server.callTool('team_trigger', {
+    prompt: 'use agent teams ship a high-complexity refactor across modules with parallel streams',
+    profile: 'deep',
+    task_size: 'high',
+    max_threads: 6,
+    active_session_model: 'gpt-5-codex'
+  });
+
+  assert.equal(triggered.ok, true);
+  assert.equal(triggered.triggered, true);
+  assert.equal(triggered.orchestration.recommended_threads, 6);
+  assert.equal(triggered.orchestration.spawned_count, 6);
+
+  const status = server.callTool('team_status', { team_id: triggered.team.team_id });
+  assert.equal(status.ok, true);
+  assert.equal(status.metrics.agents, 6);
 
   server.store.close();
 });

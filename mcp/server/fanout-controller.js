@@ -47,8 +47,7 @@ export function recommendFanout({
     reasons.push(`parallel demand capped by size profile (${task_size}) max ${range.max}`);
   }
   if (recommended < range.min) {
-    recommended = range.min;
-    reasons.push('budget pressure forced floor to range minimum');
+    reasons.push(`budget constrained recommendation below size-profile minimum (${range.min})`);
   }
   if (affordable < parallelDemand) {
     reasons.push(`budget constrained affordable agents to ${affordable}`);

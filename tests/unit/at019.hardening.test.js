@@ -48,6 +48,60 @@ test('AT-019 server enforces team-scoped access by auth context', () => {
   server.store.close();
 });
 
+test('AT-019 message tools reject cross-team agent usage', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  const teamA = server.callTool('team_start', { objective: 'team-a', max_threads: 3 });
+  const teamB = server.callTool('team_start', { objective: 'team-b', max_threads: 3 });
+
+  const agentA1 = server.callTool('team_spawn', { team_id: teamA.team.team_id, role: 'lead' });
+  const agentA2 = server.callTool('team_spawn', { team_id: teamA.team.team_id, role: 'reviewer' });
+  const agentB1 = server.callTool('team_spawn', { team_id: teamB.team.team_id, role: 'implementer' });
+
+  const direct = server.callTool('team_send', {
+    team_id: teamA.team.team_id,
+    from_agent_id: agentB1.agent.agent_id,
+    to_agent_id: agentA2.agent.agent_id,
+    summary: 'cross-team direct',
+    artifact_refs: [],
+    idempotency_key: 'cross-team-direct'
+  });
+  assert.equal(direct.ok, false);
+  assert.match(direct.error, /from_agent not in team/);
+
+  const broadcast = server.callTool('team_broadcast', {
+    team_id: teamA.team.team_id,
+    from_agent_id: agentB1.agent.agent_id,
+    summary: 'cross-team broadcast',
+    artifact_refs: [],
+    idempotency_key: 'cross-team-broadcast'
+  });
+  assert.equal(broadcast.ok, false);
+  assert.match(broadcast.error, /from_agent not in team/);
+
+  const pull = server.callTool('team_pull_inbox', {
+    team_id: teamA.team.team_id,
+    agent_id: agentB1.agent.agent_id
+  });
+  assert.equal(pull.ok, false);
+  assert.match(pull.error, /agent not in team/);
+
+  const valid = server.callTool('team_send', {
+    team_id: teamA.team.team_id,
+    from_agent_id: agentA1.agent.agent_id,
+    to_agent_id: agentA2.agent.agent_id,
+    summary: 'valid in-team message',
+    artifact_refs: [],
+    idempotency_key: 'same-team-direct'
+  });
+  assert.equal(valid.ok, true);
+
+  server.store.close();
+});
+
 test('AT-019 payload limits reject oversized artifacts and messages', () => {
   const server = createServer({ dbPath, logPath });
   server.start();

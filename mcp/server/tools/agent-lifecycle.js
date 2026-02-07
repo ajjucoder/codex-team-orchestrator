@@ -24,6 +24,13 @@ function getAgentOrError(server, agentId) {
   return { agent };
 }
 
+function ensureAgentInTeam(agent, teamId, label) {
+  if (agent.team_id !== teamId) {
+    return { ok: false, error: `${label} not in team ${teamId}: ${agent.agent_id}` };
+  }
+  return { ok: true };
+}
+
 function validateMessagePayload(summary, artifactRefs) {
   if (summary.length > MAX_SUMMARY_LENGTH) {
     return { ok: false, error: `summary too long: max ${MAX_SUMMARY_LENGTH}` };
@@ -86,6 +93,14 @@ export function registerAgentLifecycleTools(server) {
     if (toLookup.error) {
       return { ok: false, error: toLookup.error };
     }
+    const fromMembership = ensureAgentInTeam(fromLookup.agent, input.team_id, 'from_agent');
+    if (!fromMembership.ok) {
+      return fromMembership;
+    }
+    const toMembership = ensureAgentInTeam(toLookup.agent, input.team_id, 'to_agent');
+    if (!toMembership.ok) {
+      return toMembership;
+    }
 
     const payloadValidation = validateMessagePayload(input.summary, input.artifact_refs);
     if (!payloadValidation.ok) {
@@ -132,6 +147,10 @@ export function registerAgentLifecycleTools(server) {
     const fromLookup = getAgentOrError(server, input.from_agent_id);
     if (fromLookup.error) {
       return { ok: false, error: fromLookup.error };
+    }
+    const fromMembership = ensureAgentInTeam(fromLookup.agent, input.team_id, 'from_agent');
+    if (!fromMembership.ok) {
+      return fromMembership;
     }
 
     const payloadValidation = validateMessagePayload(input.summary, input.artifact_refs);
@@ -180,6 +199,10 @@ export function registerAgentLifecycleTools(server) {
     const agentLookup = getAgentOrError(server, input.agent_id);
     if (agentLookup.error) {
       return { ok: false, error: agentLookup.error };
+    }
+    const agentMembership = ensureAgentInTeam(agentLookup.agent, input.team_id, 'agent');
+    if (!agentMembership.ok) {
+      return agentMembership;
     }
 
     const messages = server.store.pullInbox(input.team_id, input.agent_id, input.limit ?? 20);

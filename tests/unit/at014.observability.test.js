@@ -31,15 +31,18 @@ test('AT-014 run summary tool returns aggregate metrics', () => {
 
   const team = server.callTool('team_start', { objective: 'summary test', profile: 'default' });
   const teamId = team.team.team_id;
+  server.callTool('team_status', { team_id: teamId });
   const summary = server.callTool('team_run_summary', { team_id: teamId });
 
   assert.equal(summary.ok, true);
   assert.equal(summary.summary.metrics.agents, 0);
   assert.equal(summary.summary.metrics.messages, 0);
   assert.equal(summary.summary.metrics.events >= 0, true);
+  assert.equal(summary.summary.usage.sample_count >= 1, true);
 
   const direct = makeRunSummary(server.store, teamId);
   assert.equal(direct.team_id, teamId);
+  assert.equal(direct.usage.sample_count >= 1, true);
 
   server.store.close();
 });

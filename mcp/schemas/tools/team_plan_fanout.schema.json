@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "required": ["team_id", "task_size", "estimated_parallel_tasks", "budget_tokens_remaining", "token_cost_per_agent"],
+  "required": ["team_id", "task_size", "estimated_parallel_tasks", "budget_tokens_remaining"],
   "properties": {
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "task_size": { "type": "string", "enum": ["small", "medium", "high"] },

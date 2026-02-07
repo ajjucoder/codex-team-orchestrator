@@ -1,4 +1,5 @@
 import { validateTool } from './contracts.js';
+import { estimateToolUsage } from './usage-estimator.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -46,6 +47,8 @@ export class MCPServer {
       throw new Error(`unknown tool: ${name}`);
     }
 
+    const startedAtMs = Date.now();
+
     const authErrors = authorizeContext(input, context);
     if (authErrors.length > 0) {
       return {
@@ -63,6 +66,7 @@ export class MCPServer {
     }
 
     const result = tool.handler(input, context);
+    const latency_ms = Math.max(0, Date.now() - startedAtMs);
     const trace = {
       team_id: context.team_id ?? input.team_id ?? null,
       agent_id: context.agent_id ?? input.from_agent_id ?? null,
@@ -70,6 +74,8 @@ export class MCPServer {
       message_id: context.message_id ?? null,
       artifact_id: context.artifact_id ?? null
     };
+    const agent = trace.agent_id ? this.store.getAgent(trace.agent_id) : null;
+    const usage = estimateToolUsage({ input, result });
 
     this.store.logEvent({
       ...trace,
@@ -81,6 +87,18 @@ export class MCPServer {
           artifact_refs: input.artifact_refs ?? []
         },
         ok: Boolean(result?.ok ?? true)
+      }
+    });
+    this.store.logEvent({
+      ...trace,
+      event_type: 'usage_sample',
+      payload: {
+        tool_name: name,
+        role: agent?.role ?? 'unknown',
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        estimated_tokens: usage.estimated_tokens,
+        latency_ms
       }
     });
 
