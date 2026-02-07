@@ -1,0 +1,78 @@
+{
+  "name": "fixed-eval-set-v1",
+  "quality_threshold": 0.95,
+  "cases": [
+    {
+      "id": "small-analysis",
+      "profile": "default",
+      "task_size": "small",
+      "estimated_parallel_tasks": 2,
+      "required_threads": 2,
+      "budget_tokens_remaining": 12000,
+      "token_cost_per_agent": 900,
+      "base_tokens": 2200,
+      "agent_token_overhead": 750,
+      "base_time_ms": 7000
+    },
+    {
+      "id": "small-fix",
+      "profile": "fast",
+      "task_size": "small",
+      "estimated_parallel_tasks": 1,
+      "required_threads": 1,
+      "budget_tokens_remaining": 9000,
+      "token_cost_per_agent": 800,
+      "base_tokens": 2000,
+      "agent_token_overhead": 700,
+      "base_time_ms": 6500
+    },
+    {
+      "id": "medium-feature",
+      "profile": "default",
+      "task_size": "medium",
+      "estimated_parallel_tasks": 4,
+      "required_threads": 4,
+      "budget_tokens_remaining": 20000,
+      "token_cost_per_agent": 1100,
+      "base_tokens": 3000,
+      "agent_token_overhead": 850,
+      "base_time_ms": 9000
+    },
+    {
+      "id": "medium-review",
+      "profile": "deep",
+      "task_size": "medium",
+      "estimated_parallel_tasks": 3,
+      "required_threads": 3,
+      "budget_tokens_remaining": 22000,
+      "token_cost_per_agent": 1200,
+      "base_tokens": 3200,
+      "agent_token_overhead": 900,
+      "base_time_ms": 9300
+    },
+    {
+      "id": "high-refactor",
+      "profile": "deep",
+      "task_size": "high",
+      "estimated_parallel_tasks": 6,
+      "required_threads": 6,
+      "budget_tokens_remaining": 36000,
+      "token_cost_per_agent": 1500,
+      "base_tokens": 4800,
+      "agent_token_overhead": 1100,
+      "base_time_ms": 13000
+    },
+    {
+      "id": "high-integration",
+      "profile": "default",
+      "task_size": "high",
+      "estimated_parallel_tasks": 5,
+      "required_threads": 5,
+      "budget_tokens_remaining": 30000,
+      "token_cost_per_agent": 1400,
+      "base_tokens": 4600,
+      "agent_token_overhead": 1050,
+      "base_time_ms": 12500
+    }
+  ]
+}
