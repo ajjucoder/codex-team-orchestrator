@@ -36,9 +36,69 @@ test('AT-006 spawn respects max_threads and model inheritance', () => {
 
   assert.equal(a1.ok, true);
   assert.equal(a1.agent.model, 'gpt-5-codex');
+  assert.equal(a1.agent.metadata.model_source, 'session_inherited');
+  assert.equal(a1.agent.metadata.model_routing_applied, false);
   assert.equal(a2.ok, true);
   assert.equal(a3.ok, false);
   assert.match(a3.error, /max_threads exceeded/);
+
+  server.store.close();
+});
+
+test('AT-006 spawn supports optional policy model routing while keeping explicit model precedence', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  server.policyEngine.cache.set('routed', {
+    profile: 'routed',
+    limits: { default_max_threads: 4, hard_max_threads: 6 },
+    model_routing: {
+      enabled: true,
+      mode: 'role_map',
+      default_model: 'gpt-4o-mini',
+      role_models: {
+        reviewer: 'gpt-4o'
+      }
+    },
+    permissions: {
+      default: 'safe-read',
+      reviewer: 'review-only'
+    }
+  });
+
+  const started = server.callTool('team_start', {
+    objective: 'spawn with routing',
+    profile: 'routed'
+  }, {
+    active_session_model: 'gpt-5-codex'
+  });
+
+  const teamId = started.team.team_id;
+  const reviewer = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+  const planner = server.callTool('team_spawn', { team_id: teamId, role: 'planner' });
+  const explicit = server.callTool('team_spawn', {
+    team_id: teamId,
+    role: 'implementer',
+    model: 'gpt-5'
+  });
+
+  assert.equal(reviewer.ok, true);
+  assert.equal(reviewer.agent.model, 'gpt-4o');
+  assert.equal(reviewer.agent.metadata.model_source, 'policy_role_route');
+  assert.equal(reviewer.agent.metadata.model_routing_applied, true);
+  assert.equal(reviewer.agent.metadata.permission_profile, 'review-only');
+
+  assert.equal(planner.ok, true);
+  assert.equal(planner.agent.model, 'gpt-4o-mini');
+  assert.equal(planner.agent.metadata.model_source, 'policy_default_route');
+  assert.equal(planner.agent.metadata.permission_profile, 'safe-read');
+
+  assert.equal(explicit.ok, true);
+  assert.equal(explicit.agent.model, 'gpt-5');
+  assert.equal(explicit.agent.metadata.model_source, 'explicit_input');
+  assert.equal(explicit.agent.metadata.model_routing_applied, false);
 
   server.store.close();
 });

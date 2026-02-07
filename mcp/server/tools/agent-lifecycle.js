@@ -42,6 +42,52 @@ function validateMessagePayload(summary, artifactRefs) {
   return { ok: true };
 }
 
+function pickString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function resolveSpawnModel({ inputModel, team, role, policy }) {
+  const explicit = pickString(inputModel);
+  if (explicit) {
+    return {
+      model: explicit,
+      model_source: 'explicit_input',
+      model_routing_applied: false,
+      inherited_model: false
+    };
+  }
+
+  const modelRouting = policy?.model_routing ?? {};
+  if (modelRouting.enabled === true) {
+    const roleModel = pickString(modelRouting?.role_models?.[role]);
+    const defaultModel = pickString(modelRouting?.default_model);
+    const routedModel = roleModel ?? defaultModel;
+    if (routedModel) {
+      return {
+        model: routedModel,
+        model_source: roleModel ? 'policy_role_route' : 'policy_default_route',
+        model_routing_applied: true,
+        inherited_model: false
+      };
+    }
+  }
+
+  return {
+    model: team.session_model ?? null,
+    model_source: 'session_inherited',
+    model_routing_applied: false,
+    inherited_model: true
+  };
+}
+
+function resolvePermissionProfile({ policy, role }) {
+  const roleScoped = pickString(policy?.permissions?.[role]);
+  if (roleScoped) return roleScoped;
+  return pickString(policy?.permissions?.default);
+}
+
 function normalizeArtifactRefs(artifactRefs = []) {
   return [...artifactRefs]
     .map((ref) => ({
@@ -96,6 +142,7 @@ export function registerAgentLifecycleTools(server) {
     }
 
     const team = teamLookup.team;
+    const policy = server.policyEngine?.resolveTeamPolicy(team) ?? {};
     const agentCount = server.store.listAgentsByTeam(input.team_id).length;
     if (agentCount >= team.max_threads) {
       return {
@@ -105,17 +152,26 @@ export function registerAgentLifecycleTools(server) {
     }
 
     const ts = nowIso();
-    // Future enhancement: support optional per-role model routing when policy.model_routing.enabled=true.
+    const modelAssignment = resolveSpawnModel({
+      inputModel: input.model,
+      team,
+      role: input.role,
+      policy
+    });
+    const permissionProfile = resolvePermissionProfile({ policy, role: input.role });
     const agent = server.store.createAgent({
       agent_id: newId('agent'),
       team_id: input.team_id,
       role: input.role,
       status: 'idle',
-      model: input.model ?? team.session_model ?? null,
+      model: modelAssignment.model,
       created_at: ts,
       updated_at: ts,
       metadata: {
-        inherited_model: !input.model
+        inherited_model: modelAssignment.inherited_model,
+        model_source: modelAssignment.model_source,
+        model_routing_applied: modelAssignment.model_routing_applied,
+        permission_profile: permissionProfile
       }
     });
 

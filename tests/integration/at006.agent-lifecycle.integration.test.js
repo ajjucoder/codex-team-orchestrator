@@ -132,3 +132,76 @@ test('AT-006 integration: broadcast duplicate suppression and delta refs reduce 
 
   server.store.close();
 });
+
+test('AT-006 integration: optional policy model routing applies per role while preserving defaults', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  server.policyEngine.cache.set('routing-int', {
+    profile: 'routing-int',
+    limits: { default_max_threads: 4, hard_max_threads: 6 },
+    model_routing: {
+      enabled: true,
+      mode: 'role_map',
+      default_model: 'gpt-4o-mini',
+      role_models: {
+        reviewer: 'gpt-4o'
+      }
+    },
+    permissions: {
+      default: 'safe-read',
+      reviewer: 'review-only'
+    }
+  });
+
+  const routedTeam = server.callTool('team_start', {
+    objective: 'integration routing team',
+    profile: 'routing-int',
+    max_threads: 4
+  }, {
+    active_session_model: 'gpt-5-codex'
+  });
+  const routedTeamId = routedTeam.team.team_id;
+
+  const reviewer = server.callTool('team_spawn', { team_id: routedTeamId, role: 'reviewer' });
+  const planner = server.callTool('team_spawn', { team_id: routedTeamId, role: 'planner' });
+  const explicit = server.callTool('team_spawn', {
+    team_id: routedTeamId,
+    role: 'implementer',
+    model: 'gpt-5'
+  });
+
+  assert.equal(reviewer.ok, true);
+  assert.equal(reviewer.agent.model, 'gpt-4o');
+  assert.equal(reviewer.agent.metadata.model_source, 'policy_role_route');
+  assert.equal(reviewer.agent.metadata.permission_profile, 'review-only');
+
+  assert.equal(planner.ok, true);
+  assert.equal(planner.agent.model, 'gpt-4o-mini');
+  assert.equal(planner.agent.metadata.model_source, 'policy_default_route');
+  assert.equal(planner.agent.metadata.permission_profile, 'safe-read');
+
+  assert.equal(explicit.ok, true);
+  assert.equal(explicit.agent.model, 'gpt-5');
+  assert.equal(explicit.agent.metadata.model_source, 'explicit_input');
+
+  const defaultTeam = server.callTool('team_start', {
+    objective: 'integration default team',
+    profile: 'default',
+    max_threads: 2
+  }, {
+    active_session_model: 'gpt-5-codex'
+  });
+  const inherited = server.callTool('team_spawn', {
+    team_id: defaultTeam.team.team_id,
+    role: 'tester'
+  });
+  assert.equal(inherited.ok, true);
+  assert.equal(inherited.agent.model, 'gpt-5-codex');
+  assert.equal(inherited.agent.metadata.model_source, 'session_inherited');
+  assert.equal(inherited.agent.metadata.model_routing_applied, false);
+
+  server.store.close();
+});
