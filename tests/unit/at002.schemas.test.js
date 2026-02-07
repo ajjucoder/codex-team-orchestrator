@@ -60,7 +60,7 @@ test('AT-002 message schema enforces direct messages include destination', () =>
 });
 
 test('AT-002 tool schema inventory exists', () => {
-  for (const required of ['team_start.schema.json', 'team_spawn.schema.json', 'team_send.schema.json', 'team_broadcast.schema.json']) {
+  for (const required of ['team_start.schema.json', 'team_spawn.schema.json', 'team_send.schema.json', 'team_broadcast.schema.json', 'team_task_next.schema.json', 'team_task_cancel_others.schema.json']) {
     assert.ok(toolSchemas[required], `missing ${required}`);
   }
 });

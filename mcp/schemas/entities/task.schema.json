@@ -7,7 +7,11 @@
     "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" },
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "title": { "type": "string" },
-    "status": { "type": "string", "enum": ["todo", "in_progress", "blocked", "done"] },
+    "depends_on_task_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" }
+    },
+    "status": { "type": "string", "enum": ["todo", "in_progress", "blocked", "done", "cancelled"] },
     "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
     "claimed_by": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "created_at": { "type": "string" },

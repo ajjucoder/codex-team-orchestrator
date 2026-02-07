@@ -15,8 +15,9 @@ test('AT-003 migrations create schema and record version', () => {
   const store = new SqliteStore(dbPath);
   store.migrate();
   const rows = store.db.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length >= 2, true);
   assert.equal(rows[0].version, '001_initial');
+  assert.equal(rows[1].version, '002_task_dependencies');
   store.close();
   assert.equal(existsSync(dbPath), true);
 });

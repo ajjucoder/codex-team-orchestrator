@@ -447,6 +447,15 @@ export class SqliteStore {
       };
     }
 
+    if (current.status !== 'todo') {
+      return { ok: false, error: `task not claimable from status ${current.status}` };
+    }
+
+    const unresolvedDependencies = this.countUnresolvedDependencies(team_id, task_id);
+    if (unresolvedDependencies > 0) {
+      return { ok: false, error: `task ${task_id} has unresolved dependencies (${unresolvedDependencies})` };
+    }
+
     let changes = 0;
     this.runWithRetry(() => {
       const result = this.db
@@ -506,6 +515,47 @@ export class SqliteStore {
     }
 
     return { ok: true, task: this.getTask(task_id) };
+  }
+
+  cancelTasks({ team_id, loser_task_ids, reason = 'speculative_loser' }) {
+    const ids = [...new Set(loser_task_ids)];
+    if (!ids.length) {
+      return { cancelled: 0, tasks: [] };
+    }
+
+    const stmt = this.db.prepare(
+      `UPDATE tasks
+       SET status = 'cancelled',
+           description = CASE
+             WHEN description IS NULL OR description = '' THEN ?
+             ELSE description || '\n' || ?
+           END,
+           lock_version = lock_version + 1,
+           updated_at = ?
+       WHERE team_id = ?
+         AND task_id = ?
+         AND status IN ('todo', 'in_progress', 'blocked')`
+    );
+
+    let cancelled = 0;
+    const now = nowIso();
+    this.runWithRetry(() => {
+      for (const taskId of ids) {
+        const res = stmt.run(
+          `[cancelled] ${reason}`,
+          `[cancelled] ${reason}`,
+          now,
+          team_id,
+          taskId
+        );
+        cancelled += Number(res.changes || 0);
+      }
+    });
+
+    const tasks = ids
+      .map((taskId) => this.getTask(taskId))
+      .filter((task) => task && task.team_id === team_id);
+    return { cancelled, tasks };
   }
 
   publishArtifact({ artifact_id, team_id, name, content, published_by = null, metadata = {} }) {
@@ -714,7 +764,8 @@ export class SqliteStore {
            SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END) as todo,
            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
            SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
-           SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done
+           SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+           SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
          FROM tasks
          WHERE team_id = ?`
       )
@@ -736,11 +787,168 @@ export class SqliteStore {
           todo: Number(tasks.todo || 0),
           in_progress: Number(tasks.in_progress || 0),
           blocked: Number(tasks.blocked || 0),
-          done: Number(tasks.done || 0)
+          done: Number(tasks.done || 0),
+          cancelled: Number(tasks.cancelled || 0)
         },
         events
       },
       usage: this.summarizeUsage(teamId, 500)
     };
+  }
+
+  listTaskDependencyEdges(teamId) {
+    return this.db
+      .prepare(
+        `SELECT team_id, task_id, depends_on_task_id, created_at
+         FROM task_dependencies
+         WHERE team_id = ?
+         ORDER BY task_id ASC, depends_on_task_id ASC`
+      )
+      .all(teamId);
+  }
+
+  getTaskDependencies(teamId, taskId) {
+    const rows = this.db
+      .prepare(
+        `SELECT depends_on_task_id
+         FROM task_dependencies
+         WHERE team_id = ? AND task_id = ?
+         ORDER BY depends_on_task_id ASC`
+      )
+      .all(teamId, taskId);
+    return rows.map((row) => row.depends_on_task_id);
+  }
+
+  setTaskDependencies({ team_id, task_id, depends_on_task_ids }) {
+    const unique = [...new Set(depends_on_task_ids)];
+    this.runWithRetry(() => {
+      this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
+      try {
+        this.db
+          .prepare('DELETE FROM task_dependencies WHERE team_id = ? AND task_id = ?')
+          .run(team_id, task_id);
+
+        if (unique.length > 0) {
+          const insert = this.db.prepare(
+            `INSERT INTO task_dependencies(team_id, task_id, depends_on_task_id, created_at)
+             VALUES(?, ?, ?, ?)`
+          );
+          const createdAt = nowIso();
+          for (const dependsOnTaskId of unique) {
+            insert.run(team_id, task_id, dependsOnTaskId, createdAt);
+          }
+        }
+        this.db.exec('COMMIT;');
+      } catch (error) {
+        this.db.exec('ROLLBACK;');
+        throw error;
+      }
+    });
+  }
+
+  countUnresolvedDependencies(teamId, taskId) {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM task_dependencies td
+         JOIN tasks dep
+           ON dep.team_id = td.team_id
+          AND dep.task_id = td.depends_on_task_id
+         WHERE td.team_id = ? AND td.task_id = ? AND dep.status != 'done'`
+      )
+      .get(teamId, taskId);
+    return Number(row?.n ?? 0);
+  }
+
+  refreshTaskReadiness(teamId, taskId) {
+    const current = this.db
+      .prepare('SELECT * FROM tasks WHERE team_id = ? AND task_id = ?')
+      .get(teamId, taskId);
+    if (!current) return null;
+    if (current.status === 'done' || current.status === 'in_progress' || current.status === 'cancelled') return current;
+
+    const unresolved = this.countUnresolvedDependencies(teamId, taskId);
+    if (unresolved > 0 && current.status !== 'blocked') {
+      this.runWithRetry(() => {
+        this.db
+          .prepare(
+            `UPDATE tasks
+             SET status = 'blocked', lock_version = lock_version + 1, updated_at = ?
+             WHERE team_id = ? AND task_id = ?`
+          )
+          .run(nowIso(), teamId, taskId);
+      });
+    }
+    if (unresolved === 0 && current.status === 'blocked') {
+      this.runWithRetry(() => {
+        this.db
+          .prepare(
+            `UPDATE tasks
+             SET status = 'todo', lock_version = lock_version + 1, updated_at = ?
+             WHERE team_id = ? AND task_id = ?`
+          )
+          .run(nowIso(), teamId, taskId);
+      });
+    }
+    return this.getTask(taskId);
+  }
+
+  refreshDependentTasks(teamId, completedTaskId) {
+    const dependents = this.db
+      .prepare(
+        `SELECT DISTINCT task_id
+         FROM task_dependencies
+         WHERE team_id = ? AND depends_on_task_id = ?`
+      )
+      .all(teamId, completedTaskId)
+      .map((row) => row.task_id);
+
+    const promoted = [];
+    for (const taskId of dependents) {
+      const before = this.getTask(taskId);
+      const after = this.refreshTaskReadiness(teamId, taskId);
+      if (before?.status === 'blocked' && after?.status === 'todo') {
+        promoted.push(after);
+      }
+    }
+    return promoted;
+  }
+
+  refreshAllTaskReadiness(teamId) {
+    const candidates = this.db
+      .prepare(
+        `SELECT task_id
+         FROM tasks
+         WHERE team_id = ? AND status IN ('todo', 'blocked')
+         ORDER BY created_at ASC`
+      )
+      .all(teamId)
+      .map((row) => row.task_id);
+
+    for (const taskId of candidates) {
+      this.refreshTaskReadiness(teamId, taskId);
+    }
+  }
+
+  listReadyTasks(teamId, limit = 20) {
+    const rows = this.db
+      .prepare(
+        `SELECT t.*
+         FROM tasks t
+         LEFT JOIN task_dependencies td
+           ON td.team_id = t.team_id
+          AND td.task_id = t.task_id
+         LEFT JOIN tasks dep
+           ON dep.team_id = td.team_id
+          AND dep.task_id = td.depends_on_task_id
+          AND dep.status != 'done'
+         WHERE t.team_id = ? AND t.status = 'todo'
+         GROUP BY t.task_id
+         HAVING COUNT(dep.task_id) = 0
+         ORDER BY t.priority ASC, t.created_at ASC
+         LIMIT ?`
+      )
+      .all(teamId, limit);
+    return rows;
   }
 }
