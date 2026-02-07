@@ -18,12 +18,6 @@ function defaultEstimatedParallelTasks(taskSize) {
   return 6;
 }
 
-function defaultTokenCost(taskSize) {
-  if (taskSize === 'small') return 900;
-  if (taskSize === 'medium') return 1100;
-  return 1500;
-}
-
 function fallbackRecommendedThreads(taskSize, teamMaxThreads) {
   const base = defaultEstimatedParallelTasks(taskSize);
   return clamp(base, 1, Math.min(Number(teamMaxThreads ?? HARD_MAX_THREADS), HARD_MAX_THREADS));
@@ -80,24 +74,30 @@ export function registerTriggerTools(server) {
     const estimatedParallelTasks = input.estimated_parallel_tasks ?? defaultEstimatedParallelTasks(taskSize);
     const budgetTokensRemaining = input.budget_tokens_remaining ??
       Number(policy?.budgets?.token_soft_limit ?? 12000);
-    const tokenCostPerAgent = input.token_cost_per_agent ?? defaultTokenCost(taskSize);
+    const plannedRoles = rolesForThreadCount(
+      Math.min(estimatedParallelTasks, Number(team.max_threads ?? HARD_MAX_THREADS))
+    );
 
     let recommendedThreads = fallbackRecommendedThreads(taskSize, team.max_threads);
     const spawnErrors = [];
     const spawnedAgents = [];
+    let budgetController = null;
 
     if (server.tools.has('team_plan_fanout')) {
-      const plan = server.callTool('team_plan_fanout', {
+      const fanoutInput = {
         team_id: team.team_id,
         task_size: taskSize,
         estimated_parallel_tasks: estimatedParallelTasks,
         budget_tokens_remaining: budgetTokensRemaining,
-        token_cost_per_agent: tokenCostPerAgent,
-        planned_roles: rolesForThreadCount(
-          Math.min(estimatedParallelTasks, Number(team.max_threads ?? HARD_MAX_THREADS))
-        )
-      });
+        planned_roles: plannedRoles
+      };
+      if (Number.isFinite(input.token_cost_per_agent) && input.token_cost_per_agent > 0) {
+        fanoutInput.token_cost_per_agent = Number(input.token_cost_per_agent);
+      }
+
+      const plan = server.callTool('team_plan_fanout', fanoutInput);
       if (plan.ok) {
+        budgetController = plan.budget_controller ?? null;
         recommendedThreads = clamp(
           Number(plan.recommendation?.recommended_threads ?? recommendedThreads),
           1,
@@ -134,6 +134,7 @@ export function registerTriggerTools(server) {
         estimated_parallel_tasks: estimatedParallelTasks,
         recommended_threads: recommendedThreads,
         hard_cap: HARD_MAX_THREADS,
+        budget_controller: budgetController,
         spawned_count: spawnedAgents.length,
         spawned_agents: spawnedAgents.map((agent) => ({
           agent_id: agent.agent_id,

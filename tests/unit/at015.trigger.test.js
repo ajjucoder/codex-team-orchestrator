@@ -84,6 +84,54 @@ test('AT-015 trigger auto-spawns specialists by complexity with cap at six', () 
   assert.equal(result.orchestration.spawned_count, 6);
   assert.equal(result.orchestration.errors.length, 0);
   assert.equal(result.orchestration.spawned_agents.every((agent) => agent.model === 'gpt-5-codex'), true);
+  assert.ok(result.orchestration.budget_controller);
+  assert.notEqual(result.orchestration.budget_controller.source, 'explicit_input');
+
+  server.store.close();
+});
+
+test('AT-015 trigger uses telemetry budget estimator by default when token_cost_per_agent is omitted', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerFanoutTools(server);
+  registerTriggerTools(server);
+
+  const seedTeam = server.callTool('team_start', {
+    objective: 'seed telemetry for trigger',
+    profile: 'default',
+    max_threads: 4
+  });
+  const seedTeamId = seedTeam.team.team_id;
+  const seedSender = server.callTool('team_spawn', { team_id: seedTeamId, role: 'implementer' });
+  const seedReceiver = server.callTool('team_spawn', { team_id: seedTeamId, role: 'reviewer' });
+  for (let i = 0; i < 10; i += 1) {
+    server.callTool('team_send', {
+      team_id: seedTeamId,
+      from_agent_id: seedSender.agent.agent_id,
+      to_agent_id: seedReceiver.agent.agent_id,
+      summary: `trigger-telemetry-seed-${i}-${'x'.repeat(700)}`,
+      artifact_refs: [],
+      idempotency_key: `trigger-telemetry-seed-${i}`
+    });
+  }
+
+  const triggered = server.callTool('team_trigger', {
+    prompt: 'use agent teams plan medium implementation and tests',
+    profile: 'default',
+    task_size: 'medium',
+    auto_spawn: false,
+    max_threads: 4,
+    active_session_model: 'gpt-5-codex'
+  });
+
+  assert.equal(triggered.ok, true);
+  assert.equal(triggered.triggered, true);
+  assert.equal(triggered.orchestration.auto_spawn_enabled, false);
+  assert.ok(triggered.orchestration.budget_controller);
+  assert.equal(triggered.orchestration.budget_controller.source, 'global_telemetry');
+  assert.equal(triggered.orchestration.budget_controller.sample_count >= 8, true);
 
   server.store.close();
 });
