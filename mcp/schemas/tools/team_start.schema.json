@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["objective"],
+  "properties": {
+    "objective": { "type": "string" },
+    "profile": { "type": "string" },
+    "max_threads": { "type": "integer", "minimum": 1, "maximum": 6 },
+    "session_model": { "type": "string" }
+  },
+  "additionalProperties": false
+}

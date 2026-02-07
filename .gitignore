@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.tmp/
+benchmarks/output/
+dist/
+.DS_Store

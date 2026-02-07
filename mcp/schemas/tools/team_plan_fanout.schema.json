@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["team_id", "task_size", "estimated_parallel_tasks", "budget_tokens_remaining", "token_cost_per_agent"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "task_size": { "type": "string", "enum": ["small", "medium", "high"] },
+    "estimated_parallel_tasks": { "type": "integer", "minimum": 1 },
+    "budget_tokens_remaining": { "type": "integer", "minimum": 0 },
+    "token_cost_per_agent": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

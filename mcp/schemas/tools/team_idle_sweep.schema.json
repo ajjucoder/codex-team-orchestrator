@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": [],
+  "properties": {
+    "now_iso": { "type": "string" }
+  },
+  "additionalProperties": false
+}

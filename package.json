@@ -1,0 +1,20 @@
+{
+  "name": "codex-team-orchestrator",
+  "version": "1.0.0",
+  "description": "Production-ready multi-agent team orchestrator for Codex",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "format": "node scripts/format.mjs",
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test tests/**/*.test.js",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:integration": "node --test tests/integration/**/*.test.js",
+    "verify": "./scripts/verify.sh",
+    "benchmark": "./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive",
+    "release:package": "./scripts/package-release.sh",
+    "release:check": "./scripts/release-ready.sh"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent.schema.json",
+  "type": "object",
+  "required": ["agent_id", "team_id", "role", "status", "created_at"],
+  "properties": {
+    "agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "role": { "type": "string" },
+    "status": { "type": "string", "enum": ["idle", "busy", "stopped"] },
+    "model": { "type": "string" },
+    "created_at": { "type": "string" },
+    "trace": {
+      "type": "object",
+      "required": ["team_id", "agent_id"],
+      "properties": {
+        "team_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "message_id": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": false
+}

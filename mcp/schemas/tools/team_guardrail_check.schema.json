@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "required": ["team_id", "consensus_reached", "open_tasks"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "consensus_reached": { "type": "boolean" },
+    "open_tasks": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

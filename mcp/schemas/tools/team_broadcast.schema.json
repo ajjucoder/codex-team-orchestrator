@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["team_id", "from_agent_id", "summary", "idempotency_key"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "from_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+    "summary": { "type": "string" },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "version"],
+        "properties": {
+          "artifact_id": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "idempotency_key": { "type": "string" }
+  },
+  "additionalProperties": false
+}

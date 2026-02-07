@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "task.schema.json",
+  "type": "object",
+  "required": ["task_id", "team_id", "title", "status", "priority", "created_at"],
+  "properties": {
+    "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" },
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "title": { "type": "string" },
+    "status": { "type": "string", "enum": ["todo", "in_progress", "blocked", "done"] },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "claimed_by": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "trace": {
+      "type": "object",
+      "required": ["team_id", "task_id"],
+      "properties": {
+        "team_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "message_id": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": false
+}

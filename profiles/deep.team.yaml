@@ -1,0 +1,20 @@
+profile: deep
+limits:
+  default_max_threads: 5
+  hard_max_threads: 6
+fanout:
+  small_min: 2
+  small_max: 2
+  medium_min: 3
+  medium_max: 4
+  high_min: 5
+  high_max: 6
+budgets:
+  token_soft_limit: 22000
+  token_hard_limit: 36000
+  idle_shutdown_ms: 300000
+guardrails:
+  compact_messages: true
+  early_stop_on_consensus: false
+arbitration:
+  default_strategy: consensus

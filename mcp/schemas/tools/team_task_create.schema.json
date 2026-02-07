@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["team_id", "title", "priority"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 5 }
+  },
+  "additionalProperties": false
+}

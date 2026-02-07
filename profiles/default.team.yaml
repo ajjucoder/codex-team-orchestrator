@@ -1,0 +1,20 @@
+profile: default
+limits:
+  default_max_threads: 4
+  hard_max_threads: 6
+fanout:
+  small_min: 1
+  small_max: 2
+  medium_min: 3
+  medium_max: 4
+  high_min: 5
+  high_max: 6
+budgets:
+  token_soft_limit: 12000
+  token_hard_limit: 20000
+  idle_shutdown_ms: 180000
+guardrails:
+  compact_messages: true
+  early_stop_on_consensus: true
+arbitration:
+  default_strategy: lead

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "artifact.schema.json",
+  "type": "object",
+  "required": ["artifact_id", "team_id", "name", "version", "checksum", "content", "created_at"],
+  "properties": {
+    "artifact_id": { "type": "string", "pattern": "^artifact_[A-Za-z0-9_-]+$" },
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "name": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "checksum": { "type": "string" },
+    "content": { "type": "string" },
+    "created_at": { "type": "string" },
+    "trace": {
+      "type": "object",
+      "required": ["team_id", "artifact_id"],
+      "properties": {
+        "team_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "message_id": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": false
+}
