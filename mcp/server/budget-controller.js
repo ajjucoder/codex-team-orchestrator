@@ -8,6 +8,17 @@ function average(values) {
   return total / values.length;
 }
 
+function percentile(values, p) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = clamp(p, 0, 1) * (sorted.length - 1);
+  const low = Math.floor(rank);
+  const high = Math.ceil(rank);
+  if (low === high) return sorted[low];
+  const weight = rank - low;
+  return sorted[low] * (1 - weight) + sorted[high] * weight;
+}
+
 function defaultRoleWeight(role) {
   if (role === 'lead') return 1.25;
   if (role === 'implementer') return 1.2;
@@ -24,11 +35,47 @@ function fallbackCostForTaskSize(taskSize) {
   return 1500;
 }
 
+function normalizeTelemetrySamples(samples = []) {
+  return samples
+    .filter((sample) => Number(sample.estimated_tokens) > 0)
+    .filter((sample) => sample.role && sample.role !== 'unknown');
+}
+
+function chooseTelemetrySamples({ store, team_id, lookback_limit, min_samples }) {
+  const teamSamples = normalizeTelemetrySamples(store.listUsageSamples(team_id, lookback_limit));
+  if (teamSamples.length >= min_samples) {
+    return { samples: teamSamples, source: 'telemetry' };
+  }
+
+  const globalSamples = normalizeTelemetrySamples(store.listUsageSamplesGlobal(lookback_limit * 3));
+  if (globalSamples.length >= min_samples) {
+    return { samples: globalSamples, source: 'global_telemetry' };
+  }
+
+  return { samples: teamSamples, source: 'task_size_fallback' };
+}
+
+function deriveCallMultiplier(samples) {
+  const callsByAgent = new Map();
+  for (const sample of samples) {
+    if (!sample.agent_id) continue;
+    callsByAgent.set(sample.agent_id, (callsByAgent.get(sample.agent_id) ?? 0) + 1);
+  }
+
+  if (callsByAgent.size === 0) {
+    return 2.5;
+  }
+
+  const callsPerAgent = [...callsByAgent.values()];
+  return clamp(percentile(callsPerAgent, 0.6), 1.5, 6);
+}
+
 export function deriveTokenCostPerAgent({
   store,
   team_id,
   task_size,
   explicit_token_cost_per_agent = null,
+  planned_roles = [],
   lookback_limit = 400,
   min_samples = 8
 }) {
@@ -42,17 +89,21 @@ export function deriveTokenCostPerAgent({
   }
 
   const fallback = fallbackCostForTaskSize(task_size);
-  const samples = store
-    .listUsageSamples(team_id, lookback_limit)
-    .filter((sample) => Number(sample.estimated_tokens) > 0)
-    .filter((sample) => sample.role && sample.role !== 'unknown');
+  const telemetry = chooseTelemetrySamples({
+    store,
+    team_id,
+    lookback_limit,
+    min_samples
+  });
+  const samples = telemetry.samples;
 
   if (samples.length < min_samples) {
     return {
       token_cost_per_agent: fallback,
       source: 'task_size_fallback',
       sample_count: samples.length,
-      avg_sample_tokens: Math.round(average(samples.map((sample) => Number(sample.estimated_tokens) || 0)))
+      avg_sample_tokens: Math.round(average(samples.map((sample) => Number(sample.estimated_tokens) || 0))),
+      call_multiplier: 0
     };
   }
 
@@ -64,26 +115,33 @@ export function deriveTokenCostPerAgent({
   }
 
   const activeRoles = [...new Set(store.listAgentsByTeam(team_id).map((agent) => agent.role))];
-  const rolesForEstimate = activeRoles.length ? activeRoles : [...byRole.keys()];
+  const requestedRoles = [...new Set((planned_roles ?? []).filter(Boolean))];
+  const rolesForEstimate = requestedRoles.length
+    ? requestedRoles
+    : (activeRoles.length ? activeRoles : [...byRole.keys()]);
+  const meanSampleTokens = average(samples.map((sample) => Number(sample.estimated_tokens) || 0));
 
   let weightedSum = 0;
   let weightTotal = 0;
   for (const role of rolesForEstimate) {
-    const roleSamples = byRole.get(role);
-    if (!roleSamples || !roleSamples.length) continue;
+    const roleSamples = byRole.get(role) ?? [];
     const weight = defaultRoleWeight(role);
-    weightedSum += average(roleSamples) * weight;
+    const roleCost = roleSamples.length
+      ? percentile(roleSamples, 0.6)
+      : meanSampleTokens;
+    weightedSum += roleCost * weight;
     weightTotal += weight;
   }
 
-  const meanSampleTokens = average(samples.map((sample) => Number(sample.estimated_tokens) || 0));
   const representativeCallCost = weightTotal > 0 ? weightedSum / weightTotal : meanSampleTokens;
-  const token_cost_per_agent = clamp(Math.round(representativeCallCost * 2.5), 200, 6000);
+  const callMultiplier = deriveCallMultiplier(samples);
+  const token_cost_per_agent = clamp(Math.round(representativeCallCost * callMultiplier), 200, 6000);
 
   return {
     token_cost_per_agent,
-    source: 'telemetry',
+    source: telemetry.source,
     sample_count: samples.length,
-    avg_sample_tokens: Math.round(meanSampleTokens)
+    avg_sample_tokens: Math.round(meanSampleTokens),
+    call_multiplier: Number(callMultiplier.toFixed(2))
   };
 }

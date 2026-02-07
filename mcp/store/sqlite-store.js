@@ -696,6 +696,34 @@ export class SqliteStore {
     });
   }
 
+  listUsageSamplesGlobal(limit = 400) {
+    const rows = this.db
+      .prepare(
+        `SELECT id, team_id, agent_id, payload_json, created_at
+         FROM run_events
+         WHERE event_type = 'usage_sample'
+         ORDER BY id DESC
+         LIMIT ?`
+      )
+      .all(limit);
+
+    return rows.map((row) => {
+      const payload = parseJSON(row.payload_json);
+      return {
+        id: row.id,
+        team_id: row.team_id,
+        agent_id: row.agent_id,
+        created_at: row.created_at,
+        tool_name: payload.tool_name ?? 'unknown',
+        role: payload.role ?? 'unknown',
+        estimated_tokens: Number(payload.estimated_tokens || 0),
+        latency_ms: Number(payload.latency_ms || 0),
+        input_tokens: Number(payload.input_tokens || 0),
+        output_tokens: Number(payload.output_tokens || 0)
+      };
+    });
+  }
+
   summarizeUsage(teamId, limit = 500) {
     const samples = this.listUsageSamples(teamId, limit);
     const byRole = {};

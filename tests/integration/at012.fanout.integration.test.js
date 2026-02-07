@@ -100,6 +100,55 @@ test('AT-012 integration: fanout uses telemetry estimator when token cost is omi
   assert.equal(plan.budget_controller.source, 'telemetry');
   assert.equal(plan.budget_controller.sample_count >= 8, true);
   assert.equal(plan.budget_controller.token_cost_per_agent > 0, true);
+  assert.equal(plan.budget_controller.call_multiplier >= 1.5, true);
+
+  server.store.close();
+});
+
+test('AT-012 integration: fanout can use global telemetry when local team is cold', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerFanoutTools(server);
+
+  const warmTeam = server.callTool('team_start', {
+    objective: 'warm global telemetry',
+    profile: 'default',
+    max_threads: 4
+  });
+  const warmTeamId = warmTeam.team.team_id;
+  const warmSender = server.callTool('team_spawn', { team_id: warmTeamId, role: 'implementer' });
+  const warmReceiver = server.callTool('team_spawn', { team_id: warmTeamId, role: 'reviewer' });
+  for (let i = 0; i < 10; i += 1) {
+    server.callTool('team_send', {
+      team_id: warmTeamId,
+      from_agent_id: warmSender.agent.agent_id,
+      to_agent_id: warmReceiver.agent.agent_id,
+      summary: `warm-global-${i}-${'x'.repeat(800)}`,
+      artifact_refs: [],
+      idempotency_key: `warm-global-${i}`
+    });
+  }
+
+  const coldTeam = server.callTool('team_start', {
+    objective: 'cold team plan',
+    profile: 'default',
+    max_threads: 4
+  });
+  const coldTeamId = coldTeam.team.team_id;
+  const plan = server.callTool('team_plan_fanout', {
+    team_id: coldTeamId,
+    task_size: 'medium',
+    estimated_parallel_tasks: 4,
+    budget_tokens_remaining: 6000,
+    planned_roles: ['implementer', 'reviewer', 'planner']
+  });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.budget_controller.source, 'global_telemetry');
+  assert.equal(plan.budget_controller.sample_count >= 8, true);
+  assert.equal(plan.budget_controller.call_multiplier >= 1.5, true);
 
   server.store.close();
 });

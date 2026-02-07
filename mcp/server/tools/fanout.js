@@ -13,6 +13,7 @@ export function registerFanoutTools(server) {
       store: server.store,
       team_id: team.team_id,
       task_size: input.task_size,
+      planned_roles: input.planned_roles ?? [],
       explicit_token_cost_per_agent: input.token_cost_per_agent ?? null
     });
     const recommendation = recommendFanout({
@@ -34,7 +35,8 @@ export function registerFanoutTools(server) {
         token_cost_per_agent: costEstimate.token_cost_per_agent,
         source: costEstimate.source,
         sample_count: costEstimate.sample_count,
-        avg_sample_tokens: costEstimate.avg_sample_tokens
+        avg_sample_tokens: costEstimate.avg_sample_tokens,
+        call_multiplier: costEstimate.call_multiplier ?? 0
       }
     };
   });

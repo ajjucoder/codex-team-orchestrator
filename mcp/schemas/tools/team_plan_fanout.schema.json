@@ -6,7 +6,12 @@
     "task_size": { "type": "string", "enum": ["small", "medium", "high"] },
     "estimated_parallel_tasks": { "type": "integer", "minimum": 1 },
     "budget_tokens_remaining": { "type": "integer", "minimum": 0 },
-    "token_cost_per_agent": { "type": "integer", "minimum": 1 }
+    "token_cost_per_agent": { "type": "integer", "minimum": 1 },
+    "planned_roles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 6
+    }
   },
   "additionalProperties": false
 }

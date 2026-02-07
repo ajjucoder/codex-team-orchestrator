@@ -115,6 +115,7 @@ test('AT-012 fanout tool uses team profile policy', () => {
   assert.equal(plan.ok, true);
   assert.equal(plan.recommendation.recommended_threads >= 3 && plan.recommendation.recommended_threads <= 4, true);
   assert.equal(plan.budget_controller.source, 'explicit_input');
+  assert.equal(plan.budget_controller.call_multiplier, 0);
 
   server.store.close();
 });
@@ -158,6 +159,55 @@ test('AT-012 fanout tool derives token-cost estimate from telemetry when not pro
   assert.equal(plan.budget_controller.source, 'telemetry');
   assert.equal(plan.budget_controller.sample_count >= 8, true);
   assert.equal(plan.budget_controller.token_cost_per_agent > 0, true);
+  assert.equal(plan.budget_controller.call_multiplier >= 1.5, true);
+
+  server.store.close();
+});
+
+test('AT-012 fanout tool falls back to global telemetry when current team has sparse history', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerFanoutTools(server);
+
+  const seed = server.callTool('team_start', {
+    objective: 'seed telemetry history',
+    profile: 'default',
+    max_threads: 4
+  });
+  const seedTeamId = seed.team.team_id;
+  const seedSender = server.callTool('team_spawn', { team_id: seedTeamId, role: 'implementer' });
+  const seedReceiver = server.callTool('team_spawn', { team_id: seedTeamId, role: 'reviewer' });
+  for (let i = 0; i < 10; i += 1) {
+    server.callTool('team_send', {
+      team_id: seedTeamId,
+      from_agent_id: seedSender.agent.agent_id,
+      to_agent_id: seedReceiver.agent.agent_id,
+      summary: `global-telemetry-seed-${i}-${'x'.repeat(700)}`,
+      artifact_refs: [],
+      idempotency_key: `global-seed-${i}`
+    });
+  }
+
+  const fresh = server.callTool('team_start', {
+    objective: 'fresh team without local telemetry',
+    profile: 'default',
+    max_threads: 4
+  });
+  const freshTeamId = fresh.team.team_id;
+  const plan = server.callTool('team_plan_fanout', {
+    team_id: freshTeamId,
+    task_size: 'medium',
+    estimated_parallel_tasks: 4,
+    budget_tokens_remaining: 6000,
+    planned_roles: ['implementer', 'reviewer', 'planner']
+  });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.budget_controller.source, 'global_telemetry');
+  assert.equal(plan.budget_controller.sample_count >= 8, true);
+  assert.equal(plan.budget_controller.call_multiplier >= 1.5, true);
 
   server.store.close();
 });

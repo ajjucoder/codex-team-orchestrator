@@ -92,7 +92,10 @@ export function registerTriggerTools(server) {
         task_size: taskSize,
         estimated_parallel_tasks: estimatedParallelTasks,
         budget_tokens_remaining: budgetTokensRemaining,
-        token_cost_per_agent: tokenCostPerAgent
+        token_cost_per_agent: tokenCostPerAgent,
+        planned_roles: rolesForThreadCount(
+          Math.min(estimatedParallelTasks, Number(team.max_threads ?? HARD_MAX_THREADS))
+        )
       });
       if (plan.ok) {
         recommendedThreads = clamp(
