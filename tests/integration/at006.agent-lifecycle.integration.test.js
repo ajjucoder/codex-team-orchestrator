@@ -76,3 +76,59 @@ test('AT-006 integration: broadcast + inbox pull/ack works through message bus',
 
   server.store.close();
 });
+
+test('AT-006 integration: broadcast duplicate suppression and delta refs reduce bus traffic', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  const team = server.callTool('team_start', {
+    objective: 'broadcast dedup',
+    profile: 'default',
+    max_threads: 4
+  });
+  const teamId = team.team.team_id;
+
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+
+  const first = server.callTool('team_broadcast', {
+    team_id: teamId,
+    from_agent_id: lead.agent.agent_id,
+    summary: 'release artifacts',
+    artifact_refs: [{ artifact_id: 'artifact_patch', version: 1 }],
+    idempotency_key: 'broadcast-dedup-1'
+  });
+  const duplicate = server.callTool('team_broadcast', {
+    team_id: teamId,
+    from_agent_id: lead.agent.agent_id,
+    summary: 'release artifacts',
+    artifact_refs: [{ artifact_id: 'artifact_patch', version: 1 }],
+    idempotency_key: 'broadcast-dedup-2'
+  });
+  const delta = server.callTool('team_broadcast', {
+    team_id: teamId,
+    from_agent_id: lead.agent.agent_id,
+    summary: 'release artifacts',
+    artifact_refs: [
+      { artifact_id: 'artifact_patch', version: 1 },
+      { artifact_id: 'artifact_tests', version: 1 }
+    ],
+    idempotency_key: 'broadcast-dedup-3'
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(first.inserted, true);
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.inserted, false);
+  assert.equal(duplicate.duplicate_suppressed, true);
+  assert.equal(delta.ok, true);
+  assert.equal(delta.inserted, true);
+  assert.equal(delta.delta_applied, true);
+  assert.equal(delta.message.payload.artifact_refs.length, 1);
+  assert.equal(delta.message.payload.artifact_refs[0].artifact_id, 'artifact_tests');
+
+  server.store.close();
+});

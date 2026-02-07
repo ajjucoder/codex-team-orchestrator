@@ -51,6 +51,32 @@ function sha256(input) {
   return createHash('sha256').update(input).digest('hex');
 }
 
+function normalizeArtifactRefs(artifactRefs = []) {
+  return [...artifactRefs]
+    .map((ref) => ({
+      artifact_id: String(ref.artifact_id),
+      version: Number(ref.version)
+    }))
+    .sort((a, b) => {
+      const aid = a.artifact_id.localeCompare(b.artifact_id);
+      if (aid !== 0) return aid;
+      return a.version - b.version;
+    });
+}
+
+function normalizeMessagePayload(payload = {}) {
+  return {
+    summary: String(payload.summary ?? ''),
+    artifact_refs: normalizeArtifactRefs(payload.artifact_refs ?? [])
+  };
+}
+
+function payloadEquals(a, b) {
+  const left = normalizeMessagePayload(a);
+  const right = normalizeMessagePayload(b);
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export class SqliteStore {
   constructor(dbPath, options = {}) {
     this.dbPath = dbPath;
@@ -250,6 +276,86 @@ export class SqliteStore {
     });
     this.touchTeam(message.team_id);
     return result;
+  }
+
+  getLatestRouteMessage({ team_id, from_agent_id, to_agent_id = null, delivery_mode }) {
+    let row;
+    if (delivery_mode === 'direct') {
+      row = this.db
+        .prepare(
+          `SELECT *
+           FROM messages
+           WHERE team_id = ? AND from_agent_id = ? AND to_agent_id = ? AND delivery_mode = 'direct'
+           ORDER BY created_at DESC, message_id DESC
+           LIMIT 1`
+        )
+        .get(team_id, from_agent_id, to_agent_id);
+    } else {
+      row = this.db
+        .prepare(
+          `SELECT *
+           FROM messages
+           WHERE team_id = ? AND from_agent_id = ? AND delivery_mode = 'broadcast'
+           ORDER BY created_at DESC, message_id DESC
+           LIMIT 1`
+        )
+        .get(team_id, from_agent_id);
+    }
+
+    if (!row) return null;
+    return {
+      ...row,
+      payload: parseJSON(row.payload_json)
+    };
+  }
+
+  findRecentDuplicateMessage({
+    team_id,
+    from_agent_id,
+    to_agent_id = null,
+    delivery_mode,
+    payload,
+    within_ms = 120000,
+    limit = 25
+  }) {
+    let rows;
+    if (delivery_mode === 'direct') {
+      rows = this.db
+        .prepare(
+          `SELECT *
+           FROM messages
+           WHERE team_id = ? AND from_agent_id = ? AND to_agent_id = ? AND delivery_mode = 'direct'
+           ORDER BY created_at DESC, message_id DESC
+           LIMIT ?`
+        )
+        .all(team_id, from_agent_id, to_agent_id, limit);
+    } else {
+      rows = this.db
+        .prepare(
+          `SELECT *
+           FROM messages
+           WHERE team_id = ? AND from_agent_id = ? AND delivery_mode = 'broadcast'
+           ORDER BY created_at DESC, message_id DESC
+           LIMIT ?`
+        )
+        .all(team_id, from_agent_id, limit);
+    }
+
+    const cutoffMs = Date.now() - within_ms;
+    for (const row of rows) {
+      const createdAtMs = Date.parse(row.created_at);
+      if (Number.isFinite(createdAtMs) && createdAtMs < cutoffMs) {
+        continue;
+      }
+      const candidatePayload = parseJSON(row.payload_json);
+      if (payloadEquals(candidatePayload, payload)) {
+        return {
+          ...row,
+          payload: candidatePayload
+        };
+      }
+    }
+    return null;
   }
 
   pullInbox(teamId, agentId, limit = 20) {

@@ -7,6 +7,7 @@ function nowIso() {
 
 const MAX_SUMMARY_LENGTH = 5000;
 const MAX_ARTIFACT_REFS = 50;
+const DUPLICATE_SUPPRESS_WINDOW_MS = 120000;
 
 function getTeamOrError(server, teamId) {
   const team = server.store.getTeam(teamId);
@@ -41,6 +42,49 @@ function validateMessagePayload(summary, artifactRefs) {
   return { ok: true };
 }
 
+function normalizeArtifactRefs(artifactRefs = []) {
+  return [...artifactRefs]
+    .map((ref) => ({
+      artifact_id: String(ref.artifact_id),
+      version: Number(ref.version)
+    }))
+    .sort((a, b) => {
+      const aid = a.artifact_id.localeCompare(b.artifact_id);
+      if (aid !== 0) return aid;
+      return a.version - b.version;
+    });
+}
+
+function artifactRefKey(ref) {
+  return `${ref.artifact_id}@${ref.version}`;
+}
+
+function diffArtifactRefs(currentRefs = [], previousRefs = []) {
+  const previousKeys = new Set(previousRefs.map(artifactRefKey));
+  return currentRefs.filter((ref) => !previousKeys.has(artifactRefKey(ref)));
+}
+
+function duplicateResponse(existingMessage, mode) {
+  const base = {
+    ok: true,
+    inserted: false,
+    duplicate_suppressed: true,
+    message: {
+      message_id: existingMessage.message_id,
+      team_id: existingMessage.team_id,
+      from_agent_id: existingMessage.from_agent_id,
+      to_agent_id: existingMessage.to_agent_id,
+      delivery_mode: existingMessage.delivery_mode,
+      idempotency_key: existingMessage.idempotency_key,
+      payload: existingMessage.payload
+    }
+  };
+  if (mode === 'broadcast') {
+    base.recipient_count = null;
+  }
+  return base;
+}
+
 export function registerAgentLifecycleTools(server) {
   server.registerTool('team_spawn', 'team_spawn.schema.json', (input) => {
     const teamLookup = getTeamOrError(server, input.team_id);
@@ -61,6 +105,7 @@ export function registerAgentLifecycleTools(server) {
     }
 
     const ts = nowIso();
+    // Future enhancement: support optional per-role model routing when policy.model_routing.enabled=true.
     const agent = server.store.createAgent({
       agent_id: newId('agent'),
       team_id: input.team_id,
@@ -107,6 +152,59 @@ export function registerAgentLifecycleTools(server) {
       return payloadValidation;
     }
 
+    const summary = input.summary;
+    let artifactRefs = normalizeArtifactRefs(input.artifact_refs ?? []);
+    let deltaApplied = false;
+
+    const previousRouteMessage = server.store.getLatestRouteMessage({
+      team_id: input.team_id,
+      from_agent_id: input.from_agent_id,
+      to_agent_id: input.to_agent_id,
+      delivery_mode: 'direct'
+    });
+    if (previousRouteMessage?.payload?.summary === summary) {
+      const deltaRefs = diffArtifactRefs(
+        artifactRefs,
+        normalizeArtifactRefs(previousRouteMessage.payload.artifact_refs ?? [])
+      );
+      if (deltaRefs.length === 0) {
+        server.store.logEvent({
+          team_id: input.team_id,
+          agent_id: input.from_agent_id,
+          message_id: previousRouteMessage.message_id,
+          event_type: 'message_duplicate_suppressed',
+          payload: { delivery_mode: 'direct' }
+        });
+        return duplicateResponse(previousRouteMessage, 'direct');
+      }
+      if (deltaRefs.length < artifactRefs.length) {
+        artifactRefs = deltaRefs;
+        deltaApplied = true;
+      }
+    }
+
+    const duplicate = server.store.findRecentDuplicateMessage({
+      team_id: input.team_id,
+      from_agent_id: input.from_agent_id,
+      to_agent_id: input.to_agent_id,
+      delivery_mode: 'direct',
+      payload: {
+        summary,
+        artifact_refs: artifactRefs
+      },
+      within_ms: DUPLICATE_SUPPRESS_WINDOW_MS
+    });
+    if (duplicate) {
+      server.store.logEvent({
+        team_id: input.team_id,
+        agent_id: input.from_agent_id,
+        message_id: duplicate.message_id,
+        event_type: 'message_duplicate_suppressed',
+        payload: { delivery_mode: 'direct' }
+      });
+      return duplicateResponse(duplicate, 'direct');
+    }
+
     const createdAt = nowIso();
     const result = server.store.appendMessage({
       message_id: newId('msg'),
@@ -115,17 +213,31 @@ export function registerAgentLifecycleTools(server) {
       to_agent_id: input.to_agent_id,
       delivery_mode: 'direct',
       payload: {
-        summary: input.summary,
-        artifact_refs: input.artifact_refs ?? []
+        summary,
+        artifact_refs: artifactRefs
       },
       idempotency_key: input.idempotency_key,
       created_at: createdAt,
       recipient_agent_ids: [input.to_agent_id]
     });
+    if (deltaApplied) {
+      server.store.logEvent({
+        team_id: input.team_id,
+        agent_id: input.from_agent_id,
+        message_id: result.message.message_id,
+        event_type: 'message_delta_applied',
+        payload: {
+          delivery_mode: 'direct',
+          artifact_refs_reduced_to: artifactRefs.length
+        }
+      });
+    }
 
     return {
       ok: true,
       inserted: result.inserted,
+      duplicate_suppressed: false,
+      delta_applied: deltaApplied,
       message: {
         message_id: result.message.message_id,
         team_id: result.message.team_id,
@@ -158,6 +270,67 @@ export function registerAgentLifecycleTools(server) {
       return payloadValidation;
     }
 
+    const summary = input.summary;
+    let artifactRefs = normalizeArtifactRefs(input.artifact_refs ?? []);
+    let deltaApplied = false;
+
+    const previousRouteMessage = server.store.getLatestRouteMessage({
+      team_id: input.team_id,
+      from_agent_id: input.from_agent_id,
+      delivery_mode: 'broadcast'
+    });
+    if (previousRouteMessage?.payload?.summary === summary) {
+      const deltaRefs = diffArtifactRefs(
+        artifactRefs,
+        normalizeArtifactRefs(previousRouteMessage.payload.artifact_refs ?? [])
+      );
+      if (deltaRefs.length === 0) {
+        server.store.logEvent({
+          team_id: input.team_id,
+          agent_id: input.from_agent_id,
+          message_id: previousRouteMessage.message_id,
+          event_type: 'message_duplicate_suppressed',
+          payload: { delivery_mode: 'broadcast' }
+        });
+        const response = duplicateResponse(previousRouteMessage, 'broadcast');
+        response.recipient_count = server
+          .store
+          .listAgentsByTeam(input.team_id)
+          .filter((agent) => agent.agent_id !== input.from_agent_id).length;
+        return response;
+      }
+      if (deltaRefs.length < artifactRefs.length) {
+        artifactRefs = deltaRefs;
+        deltaApplied = true;
+      }
+    }
+
+    const duplicate = server.store.findRecentDuplicateMessage({
+      team_id: input.team_id,
+      from_agent_id: input.from_agent_id,
+      delivery_mode: 'broadcast',
+      payload: {
+        summary,
+        artifact_refs: artifactRefs
+      },
+      within_ms: DUPLICATE_SUPPRESS_WINDOW_MS
+    });
+    if (duplicate) {
+      server.store.logEvent({
+        team_id: input.team_id,
+        agent_id: input.from_agent_id,
+        message_id: duplicate.message_id,
+        event_type: 'message_duplicate_suppressed',
+        payload: { delivery_mode: 'broadcast' }
+      });
+      const response = duplicateResponse(duplicate, 'broadcast');
+      response.recipient_count = server
+        .store
+        .listAgentsByTeam(input.team_id)
+        .filter((agent) => agent.agent_id !== input.from_agent_id).length;
+      return response;
+    }
+
     const recipients = server
       .store
       .listAgentsByTeam(input.team_id)
@@ -170,17 +343,31 @@ export function registerAgentLifecycleTools(server) {
       from_agent_id: input.from_agent_id,
       delivery_mode: 'broadcast',
       payload: {
-        summary: input.summary,
-        artifact_refs: input.artifact_refs ?? []
+        summary,
+        artifact_refs: artifactRefs
       },
       idempotency_key: input.idempotency_key,
       created_at: nowIso(),
       recipient_agent_ids: recipients
     });
+    if (deltaApplied) {
+      server.store.logEvent({
+        team_id: input.team_id,
+        agent_id: input.from_agent_id,
+        message_id: result.message.message_id,
+        event_type: 'message_delta_applied',
+        payload: {
+          delivery_mode: 'broadcast',
+          artifact_refs_reduced_to: artifactRefs.length
+        }
+      });
+    }
 
     return {
       ok: true,
       inserted: result.inserted,
+      duplicate_suppressed: false,
+      delta_applied: deltaApplied,
       recipient_count: recipients.length,
       message: {
         message_id: result.message.message_id,
