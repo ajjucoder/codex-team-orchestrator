@@ -23,11 +23,35 @@ for (const req of requiredPaths) {
 }
 
 function walk(dir, out = []) {
-  for (const entry of readdirSync(dir)) {
+  let entries = [];
+  try {
+    entries = readdirSync(dir);
+  } catch (err) {
+    if (err && (err.code === 'ENOENT' || err.code === 'EACCES')) {
+      return out;
+    }
+    throw err;
+  }
+
+  for (const entry of entries) {
     const fullPath = join(dir, entry);
-    const st = statSync(fullPath);
+    let st;
+    try {
+      st = statSync(fullPath);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        continue;
+      }
+      throw err;
+    }
     if (st.isDirectory()) {
-      if (entry === 'node_modules' || entry.startsWith('.git')) continue;
+      if (
+        entry === 'node_modules' ||
+        entry.startsWith('.git') ||
+        entry === '.tmp'
+      ) {
+        continue;
+      }
       walk(fullPath, out);
       continue;
     }
