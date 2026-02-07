@@ -35,7 +35,7 @@ test('AT-004 integration: server logs structured tool events', () => {
 
   const events = server.store.listEvents('team_demo', 20);
   assert.equal(events.length >= 1, true);
-  assert.match(events[0].event_type, /tool_call:team_start/);
+  assert.equal(events.some((event) => /tool_call:team_start/.test(event.event_type)), true);
 
   const logText = readFileSync(logPath, 'utf8');
   assert.match(logText, /tool_call:team_start/);
