@@ -18,3 +18,6 @@ guardrails:
   early_stop_on_consensus: false
 arbitration:
   default_strategy: consensus
+model_routing:
+  enabled: false
+  mode: inherit_session_model
