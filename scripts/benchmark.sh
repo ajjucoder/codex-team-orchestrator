@@ -39,9 +39,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-args=("$REPO_ROOT/benchmarks/run-benchmark.mjs" --baseline "$baseline" --candidate "$candidate" --mode "$mode" --eval-set "$eval_set")
+args=("$REPO_ROOT/benchmarks/run-benchmark.ts" --baseline "$baseline" --candidate "$candidate" --mode "$mode" --eval-set "$eval_set")
 if [[ -n "$out" ]]; then
   args+=(--out "$out")
 fi
 
-node "${args[@]}"
+node --import tsx "${args[@]}"

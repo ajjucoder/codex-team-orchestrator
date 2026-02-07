@@ -1,0 +1,5 @@
+
+> codex-team-orchestrator@1.0.0 format
+> node --import tsx scripts/format.ts
+
+format: no-op (repository uses manual formatting standards)

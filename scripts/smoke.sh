@@ -7,11 +7,11 @@ if [[ -z "$mode" ]]; then
   exit 1
 fi
 
-node --input-type=module - "$mode" <<'NODE'
+node --import tsx --input-type=module - "$mode" <<'NODE'
 import assert from 'node:assert/strict';
-import { createServer } from './mcp/server/index.js';
-import { registerTeamLifecycleTools } from './mcp/server/tools/team-lifecycle.js';
-import { registerFanoutTools } from './mcp/server/tools/fanout.js';
+import { createServer } from './mcp/server/index.ts';
+import { registerTeamLifecycleTools } from './mcp/server/tools/team-lifecycle.ts';
+import { registerFanoutTools } from './mcp/server/tools/fanout.ts';
 
 const mode = process.argv[2];
 const config = {

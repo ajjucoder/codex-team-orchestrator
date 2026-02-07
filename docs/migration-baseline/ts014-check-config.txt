@@ -1,0 +1,2 @@
+check-config:profiles=ok
+check-config:ok

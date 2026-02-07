@@ -1,0 +1,12 @@
+benchmark:baseline=fixed-6
+benchmark:candidate=adaptive
+benchmark:mode=replay
+benchmark:median_tokens_baseline=10938
+benchmark:median_tokens_candidate=9643
+benchmark:median_quality_baseline=1
+benchmark:median_quality_candidate=1
+benchmark:delta_tokens=-1295
+benchmark:delta_quality=0
+benchmark:delta_time_ms=-0.5
+benchmark:pass=true
+benchmark:report=benchmarks/output/report-1770465401397.json

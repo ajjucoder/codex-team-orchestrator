@@ -2,6 +2,7 @@
 set -euo pipefail
 npm run format
 npm run lint
+npm run typecheck
 npm run test:unit
 npm run test:integration
 ./scripts/check-config.sh

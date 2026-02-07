@@ -21,8 +21,8 @@ for path in "${required_paths[@]}"; do
   fi
 done
 
-node --input-type=module -e "
-import { PolicyEngine } from './mcp/server/policy-engine.js';
+node --import tsx --input-type=module -e "
+import { PolicyEngine } from './mcp/server/policy-engine.ts';
 const engine = new PolicyEngine('profiles');
 for (const p of ['default', 'fast', 'deep']) {
   const loaded = engine.loadProfile(p);

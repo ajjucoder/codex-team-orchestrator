@@ -1,0 +1,5 @@
+
+> codex-team-orchestrator@1.0.0 lint
+> node --import tsx scripts/lint.ts
+
+lint: validated 0 JS files and repository shape

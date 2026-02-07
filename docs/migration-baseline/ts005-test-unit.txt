@@ -1,0 +1,109 @@
+
+> codex-team-orchestrator@1.0.0 test:unit
+> node --test tests/unit/**/*.test.js
+
+✔ AT-001 required structure exists (1.10425ms)
+✔ AT-001 package scripts exist (2.125375ms)
+✔ AT-002 entity schemas are discoverable (0.821417ms)
+✔ AT-002 team schema enforces max_threads <= 6 (1.07875ms)
+✔ AT-002 tool schema validation catches required fields (0.233833ms)
+✔ AT-002 message schema enforces direct messages include destination (0.115167ms)
+✔ AT-002 tool schema inventory exists (0.057ms)
+(node:38469) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-003 migrations create schema and record version (9.863792ms)
+✔ AT-003 CRUD for team and agent works (4.903ms)
+✔ AT-003 lock retry helper retries SQLITE_BUSY (2.920583ms)
+(node:38470) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-004 server start and health check (10.942125ms)
+✔ AT-004 tool call validates schema before handler execution (6.332875ms)
+(node:38471) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-005 team_start creates active team with model inheritance (19.183125ms)
+✔ AT-005 team_status and finalize transition lifecycle state (6.9535ms)
+(node:38472) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-006 spawn respects max_threads and model inheritance (13.128416ms)
+✔ AT-006 spawn supports optional policy model routing while keeping explicit model precedence (8.328209ms)
+✔ AT-006 team_send idempotency returns existing message (12.6585ms)
+✔ AT-006 team_send suppresses duplicate payloads even with different idempotency keys (3.785875ms)
+✔ AT-006 team_send sends artifact delta for same summary (13.610625ms)
+✔ AT-006 team_spawn_ready_roles spawns only hinted roles from ready DAG tasks (11.634584ms)
+(node:38473) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-007 create and list tasks (15.927417ms)
+✔ AT-007 required_role must be a known role on create/update (8.788458ms)
+✔ AT-007 claim/update enforce optimistic lock version (8.803083ms)
+✔ AT-007 dependency DAG blocks downstream tasks until prerequisites are done (11.185583ms)
+✔ AT-007 dependency cycles are rejected (5.086833ms)
+✔ AT-007 speculative loser cancellation marks non-winning branches as cancelled (5.927375ms)
+(node:38474) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-008 publish increments versions and checksum tracks content (17.634458ms)
+✔ AT-008 read latest/version and list latest artifacts (5.949209ms)
+(node:38475) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-009 role pack includes required v1 roles (2.714209ms)
+✔ AT-009 team_role_catalog returns role definitions (11.801709ms)
+✔ AT-009 team_spawn rejects unknown roles (6.8005ms)
+(node:38478) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-010 consensus requires all approvals (0.561083ms)
+✔ AT-010 lead strategy prioritizes lead vote (0.119292ms)
+✔ AT-010 strict_vote enforces >= 2/3 and >= 3 votes (0.123541ms)
+✔ AT-010 merge decision tool validates team agents (10.684042ms)
+(node:38479) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-011 simple YAML parser handles nested maps and scalar types (1.334ms)
+✔ AT-011 policy engine loads swappable profiles (0.877792ms)
+✔ AT-011 policy tools expose and switch profile (6.479958ms)
+(node:38480) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-012 fanout ranges map to small/medium/high constraints (0.54675ms)
+✔ AT-012 fanout hard-caps at 6 regardless of inputs (0.093125ms)
+✔ AT-012 fanout allows lower-than-band recommendation under hard budget pressure (0.125625ms)
+✔ AT-012 fanout tool uses team profile policy (18.156334ms)
+✔ AT-012 fanout tool derives token-cost estimate from telemetry when not provided (14.879584ms)
+✔ AT-012 fanout tool falls back to global telemetry when current team has sparse history (8.117417ms)
+(node:38481) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-013 compact payload keeps summary + artifact refs only (0.717166ms)
+✔ AT-013 early stop triggers on consensus + no open tasks (0.127917ms)
+✔ AT-013 idle evaluator identifies stale teams by profile thresholds (0.152833ms)
+✔ AT-013 guardrail tools enforce early stop and idle shutdown (8.904ms)
+(node:38482) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-014 parse structured log file (0.707042ms)
+✔ AT-014 run summary tool returns aggregate metrics (12.8355ms)
+(node:38483) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-015 trigger detection is case-insensitive and exact phrase-based (0.511542ms)
+✔ AT-015 objective extraction removes trigger phrase (0.152334ms)
+✔ AT-015 infers task size from prompt complexity signals (0.156125ms)
+✔ AT-015 trigger tool starts team automatically (14.946709ms)
+✔ AT-015 trigger auto-spawns specialists by complexity with cap at six (10.881083ms)
+✔ AT-015 trigger uses telemetry budget estimator by default when token_cost_per_agent is omitted (8.140917ms)
+✔ AT-015 trigger prefers DAG-ready role spawn strategy when available (5.135167ms)
+✔ AT-016 script exists: scripts/install.sh (0.401542ms)
+✔ AT-016 script exists: scripts/uninstall.sh (0.059875ms)
+✔ AT-016 script exists: scripts/check-config.sh (0.046125ms)
+(node:38485) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-017 benchmark shows lower median token usage for adaptive with no quality regression (711.143709ms)
+✔ AT-018 release metadata and docs exist (0.680875ms)
+(node:38487) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-019 logger redacts secret fields (1.314041ms)
+✔ AT-019 server enforces team-scoped access by auth context (4.009792ms)
+✔ AT-019 message tools reject cross-team agent usage (5.20525ms)
+✔ AT-019 payload limits reject oversized artifacts and messages (4.382542ms)
+✔ AT-019 team_resume restores active state with recovery snapshot (3.146291ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 951.111541

@@ -25,12 +25,27 @@ Use the phrase `use agent teams` to activate team-mode orchestration.
 
 ```bash
 npm run lint
+npm run typecheck
 npm run test:unit
 npm run test:integration
 ./scripts/verify.sh
 ./scripts/check-config.sh
 ./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive
 ```
+
+## TypeScript Workflow
+
+The repository is TypeScript-first for runtime, tests, benchmarks, and Node script entrypoints:
+
+```bash
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm test
+./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive
+```
+
+`npm run test:unit:ts` and `npm run test:integration:ts` remain as explicit TS aliases.
 
 ## Release
 

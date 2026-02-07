@@ -1,0 +1,78 @@
+
+> codex-team-orchestrator@1.0.0 test:integration
+> node --test tests/integration/**/*.test.js
+
+✔ AT-001 lint script is runnable from integration path (1451.268875ms)
+✔ AT-002 integration: representative contracts validate end-to-end (1.619459ms)
+(node:15373) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-003 integration: message idempotency and inbox delivery (5.882791ms)
+(node:15374) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-004 integration: server logs structured tool events (9.282083ms)
+(node:15375) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-005 integration: lifecycle tools emit structured events and persist state (8.739209ms)
+(node:15376) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-006 integration: broadcast + inbox pull/ack works through message bus (11.937167ms)
+✔ AT-006 integration: broadcast duplicate suppression and delta refs reduce bus traffic (15.407958ms)
+✔ AT-006 integration: optional policy model routing applies per role while preserving defaults (4.926667ms)
+✔ AT-006 integration: spawn-ready-roles uses DAG-ready required_role hints only (7.966042ms)
+(node:15377) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-007 integration: conflicting claims result in single winner (13.253292ms)
+✔ AT-007 integration: DAG-ready queue returns unblocked tasks in priority order (5.017791ms)
+✔ AT-007 integration: loser-cancel policy emits cancellation and removes branches from ready queue (7.347458ms)
+✔ AT-007 integration: ready tasks preserve required_role hints for spawn shaping (4.710041ms)
+(node:15378) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-008 integration: published artifact refs are exchanged via compact messages (12.688791ms)
+(node:15379) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-009 integration: role catalog and spawn interplay produces structured traces (8.717167ms)
+(node:15398) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-010 integration: arbitration decision persisted in structured events (11.923042ms)
+(node:15399) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-011 integration: profile swap changes behavior without code edits (7.8675ms)
+(node:15400) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-012 integration: adaptive fanout produces small/medium/high bands with hard cap (8.495ms)
+✔ AT-012 integration: fanout uses telemetry estimator when token cost is omitted (13.67825ms)
+✔ AT-012 integration: fanout can use global telemetry when local team is cold (12.211708ms)
+(node:15401) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-013 integration: idle sweep finalizes stale teams and logs structured events (8.667375ms)
+(node:15402) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-014 integration: replay returns ordered events and summary reflects activity (11.00125ms)
+(node:15403) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-015 integration: trigger phrase creates orchestration team and logs invocation (9.23025ms)
+✔ AT-015 integration: complexity-based trigger auto-spawns workers within cap (8.866708ms)
+✔ AT-015 integration: trigger fanout planning defaults to telemetry estimator (9.533167ms)
+✔ AT-016 integration: install/check/uninstall scripts succeed in isolated CODEX_HOME (101.362ms)
+(node:15439) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-017 integration: benchmark script emits pass gate and report artifact (247.126542ms)
+✔ AT-018 integration: release packaging script creates distributable archive (147.876708ms)
+(node:15485) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15517) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15541) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15407) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-019 integration: smoke scripts validate fanout bands and hard cap (130.998167ms)
+✔ AT-019 integration: cross-team messaging is denied while in-team messaging is allowed (6.947375ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1506.069583
