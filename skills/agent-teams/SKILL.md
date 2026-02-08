@@ -1,3 +1,9 @@
+---
+name: agent-teams
+description: Enable Codex-led team orchestration with worker specialization, shared task board, and compact artifact exchange. Use when the user asks for team mode or says "use agents team".
+license: Complete terms in LICENSE.txt
+---
+
 # Agent Teams Skill
 
 Trigger phrase: `use agents team`
