@@ -1,53 +1,44 @@
-Claude Code Team Orchestration Research (official docs) + Our advantage plan
+Agent Teams Research (latest only)
 Date: 2026-02-08
+Scope: Agent Teams only. Subagents docs intentionally excluded.
 
-Primary docs reviewed
-- Agent teams: https://code.claude.com/docs/en/agent-teams
-- Costs: https://code.claude.com/docs/en/costs
-- Settings: https://code.claude.com/docs/en/settings
-- Permissions: https://code.claude.com/docs/en/permissions
-- Security: https://code.claude.com/docs/en/security
-- MCP: https://code.claude.com/docs/en/mcp
-- Fast mode: https://code.claude.com/docs/en/fast-mode
-- GitHub Actions: https://code.claude.com/docs/en/github-actions
-- Subagents: https://docs.anthropic.com/en/docs/claude-code/sub-agents
-- Hooks: https://docs.anthropic.com/en/docs/claude-code/hooks
-- Hooks guide: https://docs.anthropic.com/en/docs/claude-code/hooks-guide
-- CLI: https://docs.anthropic.com/en/docs/claude-code/cli-reference
-- Common workflows / team modes: https://docs.anthropic.com/en/docs/claude-code/common-workflows
+Official sources used
+1) Agent Teams docs (core reference):
+   https://code.claude.com/docs/en/agent-teams
+2) Claude Code changelog (release-note signal for Agent Teams feature):
+   https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md
+3) Opus 4.6 announcement page (date context):
+   https://www.anthropic.com/claude/opus
+4) Anthropic engineering post using Agent Teams (date context + behavior evidence):
+   https://www.anthropic.com/engineering/building-c-compiler
 
-What Claude Code provides (relevant to team orchestration)
-1) Team parallelism: lead + teammates, delegation, shared tasking and orchestration patterns.
-2) Subagents: specialized worker contexts with tool/model/permission controls.
-3) Permission modes and rules: allow/ask/deny policy with managed controls.
-4) Hook checkpoints: pre/post/tool/stop lifecycle events that can block or allow actions.
-5) Usage controls: /cost visibility, prompt compaction, context controls, model/effort controls.
-6) MCP controls: tool-search/context reduction behavior and output token caps.
+Release-date context (official)
+- Claude Opus 4.6 announcement date is Feb 5, 2026 on Anthropic’s Opus page.
+- Claude Code changelog entry 2.1.32 adds "research preview agent teams" and references the enable flag.
+- This matches your requested window around Feb 4-5, 2026.
 
-How we make our orchestrator better
-1) Hard release gates in CI: quality floor + no quality drop + minimum token reduction must pass before release.
-   - script: scripts/v2-eval-gates.ts
-2) Deterministic mode gating and transitions to reduce wasteful fanout.
-   - tickets: docs/V2-005.md, docs/V2-006.md, docs/V2-007.md
-3) Policy hooks + runtime permission profiles to enforce safe high-quality completions.
-   - tickets: docs/V2-002.md, docs/V2-003.md, docs/V2-004.md, docs/V2-008.md, docs/V2-009.md
-4) Lease/heartbeat + orphan recovery to prevent stuck or duplicated work.
-   - tickets: docs/V2-010.md, docs/V2-011.md
-5) Team hierarchy + runtime rebalance to match complexity with minimal active agents.
-   - tickets: docs/V2-012.md, docs/V2-013.md, docs/V2-014.md
-6) Checkpoint compaction/context reset to keep context lean while preserving recoverability.
-   - ticket: docs/V2-015.md
+What Agent Teams provides (from the Agent Teams docs)
+- Multi-session orchestration with a lead plus independent teammates.
+- Shared task list with dependency handling and file-lock task claiming.
+- Direct teammate-to-teammate and lead-to-teammate communication.
+- Delegate mode so the lead can stay coordination-only.
+- Plan-approval flow for risky tasks before implementation.
+- Hook-based quality gates (e.g., TeammateIdle / TaskCompleted).
+- Explicit warning that Agent Teams are token-intensive and have coordination overhead.
 
-Definition of "better than Claude Team mode" for this project
-- Quality target: equal or better output quality on the benchmark suite.
-- Usage target: lower median token usage at same quality.
-- Reliability target: deterministic recovery and policy-governed orchestration behavior.
+How we should outperform Agent Teams in this project
+1) Keep quality equal-or-better with hard gates in CI.
+2) Keep usage lower via adaptive fanout/rebalancing instead of fixed high parallelism.
+3) Enforce deterministic safety/reliability with permission profiles, hooks, leases, and orphan recovery.
+4) Use checkpoint compaction/context reset to reduce persistent context bloat.
 
 Current proof in this repo
-- Fresh benchmark artifact: .tmp/v2-claude-advantage-report.json
-- Fresh gate run: quality passed with no drop; token reduction positive.
-- Detailed writeup: docs/benchmark-report-v2-2026-02-08.md
+- Internal quality-vs-usage benchmark report:
+  docs/benchmark-report-v2-2026-02-08.md
+- Raw report artifact:
+  .tmp/v2-claude-advantage-report.json
+- Latest measured result: quality unchanged (1.0 median) with lower median tokens (-1322.5) vs fixed-6 baseline.
 
-Important note
-- The current benchmark compares our adaptive orchestrator vs our fixed-6 baseline.
-- For a literal Claude-vs-us claim, add an external A/B harness that runs identical tasks through Claude Team mode and this orchestrator, then compares quality and token spend side-by-side.
+Important framing
+- This benchmark is internal (adaptive vs fixed baseline) and proves better efficiency at equal quality in our orchestrator.
+- A strict external "better than Claude Agent Teams" claim requires side-by-side A/B runs on identical task sets against Claude Agent Teams directly.
