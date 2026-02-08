@@ -42,6 +42,11 @@ Notes:
 - `benchmarks/`: fixed eval set and harness
 - `docs/`: implementation and ticket-level evidence
 
+## Verification Evidence
+
+- Agent-team communication and coordination verification:
+  - `docs/agent-teams-verification.md`
+
 ## Quick Start
 
 ```bash
