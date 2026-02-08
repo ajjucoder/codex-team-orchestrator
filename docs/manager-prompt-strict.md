@@ -24,6 +24,12 @@ Manager directives:
 10. Preserve active-session model inheritance.
 11. Continue automatically unless blocked by external credentials.
 12. If blocked, issue a minimal unblock request and continue non-blocked tasks.
+13. Worker wait protocol:
+   - Track each worker in a local state map: `pending_init|running|completed|failed`.
+   - Poll with wait windows `>=120000ms`.
+   - If no worker completes in a poll, report `still running (timeout window)` with counts `running/completed/failed`.
+   - Do not treat empty poll results as failure.
+   - Remove completed/failed IDs from future wait receiver lists.
 
 Hard quality and efficiency gates:
 1. Team messaging and artifact exchange must be visible in structured logs.

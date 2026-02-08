@@ -20,6 +20,12 @@ Manager directives:
 6. Preserve current behavior unless ticket explicitly allows change.
 7. Continue automatically unless blocked by external credentials or missing dependencies.
 8. If blocked, issue minimal unblock request and continue non-blocked work.
+9. Worker wait protocol:
+   - Track each worker in a local state map: `pending_init|running|completed|failed`.
+   - Poll with wait windows `>=120000ms`.
+   - If no worker completes in a poll, report `still running (timeout window)` with counts `running/completed/failed`.
+   - Do not treat empty poll results as failure.
+   - Remove completed/failed IDs from future wait receiver lists.
 
 Hard quality gates:
 1. Zero functional regressions in unit + integration tests.

@@ -13,6 +13,12 @@ This document captures concrete evidence that agent-team coordination is impleme
 5. Artifact references are exchanged across messages.
 6. Cross-team message attempts are denied.
 
+## Wait/Poll Semantics (Important)
+
+- Host tool logs may show `agents: none` after a wait call when no worker reached terminal state within that polling window.
+- This means `still running (timeout window)`, not failure.
+- Team prompts in this repo now require explicit user-facing timeout wording with live `running/completed/failed` counts.
+
 ## Runtime Implementation Points
 
 - Message tools:
