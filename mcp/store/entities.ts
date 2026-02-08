@@ -1,4 +1,5 @@
 export type TeamStatus = 'active' | 'idle' | 'paused' | 'finalized' | 'archived';
+export type TeamMode = 'default' | 'delegate' | 'plan';
 export type AgentStatus = 'idle' | 'busy' | 'offline';
 export type DeliveryMode = 'direct' | 'broadcast';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
@@ -15,7 +16,11 @@ export interface MessagePayload {
 
 export interface TeamRecord {
   team_id: string;
+  parent_team_id: string | null;
+  root_team_id: string;
+  hierarchy_depth: number;
   status: TeamStatus;
+  mode: TeamMode;
   profile: string;
   objective: string | null;
   max_threads: number;
@@ -28,7 +33,9 @@ export interface TeamRecord {
 
 export interface TeamCreateInput {
   team_id: string;
+  parent_team_id?: string | null;
   status: TeamStatus;
+  mode?: TeamMode;
   profile: string;
   objective?: string | null;
   max_threads: number;
@@ -39,12 +46,20 @@ export interface TeamCreateInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface TeamHierarchyLinkRecord {
+  ancestor_team_id: string;
+  descendant_team_id: string;
+  depth: number;
+  created_at: string;
+}
+
 export interface AgentRecord {
   agent_id: string;
   team_id: string;
   role: string;
   status: AgentStatus;
   model: string | null;
+  last_heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown>;
@@ -56,6 +71,7 @@ export interface AgentCreateInput {
   role: string;
   status: AgentStatus;
   model?: string | null;
+  last_heartbeat_at?: string | null;
   created_at: string;
   updated_at?: string;
   metadata?: Record<string, unknown>;
@@ -96,6 +112,8 @@ export interface TaskRecord {
   status: TaskStatus;
   priority: number;
   claimed_by: string | null;
+  lease_owner_agent_id: string | null;
+  lease_expires_at: string | null;
   lock_version: number;
   created_at: string;
   updated_at: string;
@@ -110,6 +128,8 @@ export interface TaskCreateInput {
   status: TaskStatus;
   priority: number;
   claimed_by?: string | null;
+  lease_owner_agent_id?: string | null;
+  lease_expires_at?: string | null;
   lock_version?: number;
   created_at: string;
   updated_at: string;

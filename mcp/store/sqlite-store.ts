@@ -18,6 +18,8 @@ import type {
   TaskCreateInput,
   TaskRecord,
   TeamCreateInput,
+  TeamHierarchyLinkRecord,
+  TeamMode,
   TeamRecord,
   TeamStatus,
   UpdateTaskInput,
@@ -59,6 +61,8 @@ interface CancelTasksResult {
   cancelled: number;
   tasks: TaskRecord[];
 }
+
+const DEFAULT_TASK_LEASE_MS = 5 * 60 * 1000;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -123,6 +127,23 @@ function normalizeMessagePayload(payload: Partial<MessagePayload> = {}): Message
     summary: String(payload.summary ?? ''),
     artifact_refs: normalizeArtifactRefs(payload.artifact_refs ?? [])
   };
+}
+
+function normalizeTeamMode(value: unknown): TeamMode {
+  if (value === 'delegate' || value === 'plan') return value;
+  return 'default';
+}
+
+function normalizeTeamId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeHierarchyDepth(value: unknown): number {
+  const depth = Number(value);
+  if (!Number.isFinite(depth) || depth < 0) return 0;
+  return Math.floor(depth);
 }
 
 function payloadEquals(a: Partial<MessagePayload>, b: Partial<MessagePayload>): boolean {
@@ -195,24 +216,78 @@ export class SqliteStore {
   }
 
   createTeam(team: TeamCreateInput): TeamRecord | null {
-    this.runWithRetry(() => {
-      this.db
-        .prepare(
-          'INSERT INTO teams(team_id, status, profile, objective, max_threads, session_model, created_at, updated_at, last_active_at, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        )
-        .run(
-          team.team_id,
-          team.status,
-          team.profile,
-          team.objective ?? null,
-          team.max_threads,
-          team.session_model ?? null,
-          team.created_at,
-          team.updated_at,
-          team.last_active_at ?? team.updated_at,
-          JSON.stringify(team.metadata ?? {})
-        );
-    });
+    const parentTeamId = normalizeTeamId(team.parent_team_id);
+    try {
+      this.runWithRetry(() => {
+        this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
+        try {
+          let rootTeamId = team.team_id;
+          let hierarchyDepth = 0;
+          if (parentTeamId) {
+            const parent = this.db
+              .prepare('SELECT team_id, root_team_id, hierarchy_depth FROM teams WHERE team_id = ?')
+              .get(parentTeamId);
+            if (!parent) {
+              throw new Error(`parent team not found: ${parentTeamId}`);
+            }
+            rootTeamId = normalizeTeamId(parent.root_team_id) ?? String(parent.team_id);
+            hierarchyDepth = normalizeHierarchyDepth(parent.hierarchy_depth) + 1;
+          }
+
+          this.db
+            .prepare(
+              'INSERT INTO teams(team_id, parent_team_id, root_team_id, hierarchy_depth, status, mode, profile, objective, max_threads, session_model, created_at, updated_at, last_active_at, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )
+            .run(
+              team.team_id,
+              parentTeamId,
+              rootTeamId,
+              hierarchyDepth,
+              team.status,
+              team.mode ?? 'default',
+              team.profile,
+              team.objective ?? null,
+              team.max_threads,
+              team.session_model ?? null,
+              team.created_at,
+              team.updated_at,
+              team.last_active_at ?? team.updated_at,
+              JSON.stringify(team.metadata ?? {})
+            );
+
+          this.db
+            .prepare(
+              'INSERT OR IGNORE INTO team_hierarchy(ancestor_team_id, descendant_team_id, depth, created_at) VALUES(?, ?, 0, ?)'
+            )
+            .run(team.team_id, team.team_id, team.created_at);
+
+          if (parentTeamId) {
+            const ancestorRows = this.db
+              .prepare(
+                'SELECT ancestor_team_id, depth FROM team_hierarchy WHERE descendant_team_id = ? ORDER BY depth ASC'
+              )
+              .all(parentTeamId);
+            const insertAncestor = this.db.prepare(
+              'INSERT OR IGNORE INTO team_hierarchy(ancestor_team_id, descendant_team_id, depth, created_at) VALUES(?, ?, ?, ?)'
+            );
+            for (const row of ancestorRows) {
+              insertAncestor.run(
+                String(row.ancestor_team_id),
+                team.team_id,
+                normalizeHierarchyDepth(row.depth) + 1,
+                team.created_at
+              );
+            }
+          }
+          this.db.exec('COMMIT;');
+        } catch (error) {
+          this.db.exec('ROLLBACK;');
+          throw error;
+        }
+      });
+    } catch {
+      return null;
+    }
     return this.getTeam(team.team_id);
   }
 
@@ -221,6 +296,10 @@ export class SqliteStore {
     if (!row) return null;
     return {
       ...row,
+      parent_team_id: normalizeTeamId(row.parent_team_id),
+      root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+      hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+      mode: normalizeTeamMode(row.mode),
       metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
     } as TeamRecord;
   }
@@ -229,8 +308,96 @@ export class SqliteStore {
     const rows = this.db.prepare('SELECT * FROM teams ORDER BY created_at').all();
     return rows.map((row) => ({
       ...row,
+      parent_team_id: normalizeTeamId(row.parent_team_id),
+      root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+      hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+      mode: normalizeTeamMode(row.mode),
       metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
     })) as TeamRecord[];
+  }
+
+  listChildTeams(parentTeamId: string, recursive = false): TeamRecord[] {
+    if (!recursive) {
+      const rows = this.db
+        .prepare('SELECT * FROM teams WHERE parent_team_id = ? ORDER BY created_at ASC')
+        .all(parentTeamId);
+      return rows.map((row) => ({
+        ...row,
+        parent_team_id: normalizeTeamId(row.parent_team_id),
+        root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+        hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+        mode: normalizeTeamMode(row.mode),
+        metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
+      })) as TeamRecord[];
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT t.*
+         FROM team_hierarchy h
+         JOIN teams t ON t.team_id = h.descendant_team_id
+         WHERE h.ancestor_team_id = ? AND h.depth > 0
+         ORDER BY h.depth ASC, t.created_at ASC`
+      )
+      .all(parentTeamId);
+    return rows.map((row) => ({
+      ...row,
+      parent_team_id: normalizeTeamId(row.parent_team_id),
+      root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+      hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+      mode: normalizeTeamMode(row.mode),
+      metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
+    })) as TeamRecord[];
+  }
+
+  listTeamLineage(teamId: string): TeamRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.*
+         FROM team_hierarchy h
+         JOIN teams t ON t.team_id = h.ancestor_team_id
+         WHERE h.descendant_team_id = ? AND h.depth > 0
+         ORDER BY h.depth DESC, t.created_at ASC`
+      )
+      .all(teamId);
+    return rows.map((row) => ({
+      ...row,
+      parent_team_id: normalizeTeamId(row.parent_team_id),
+      root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+      hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+      mode: normalizeTeamMode(row.mode),
+      metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
+    })) as TeamRecord[];
+  }
+
+  isDescendantTeam(ancestorTeamId: string, descendantTeamId: string, allowSame = true): boolean {
+    if (allowSame && ancestorTeamId === descendantTeamId) return true;
+    const row = this.db
+      .prepare(
+        `SELECT 1 as ok
+         FROM team_hierarchy
+         WHERE ancestor_team_id = ? AND descendant_team_id = ? AND depth > 0
+         LIMIT 1`
+      )
+      .get(ancestorTeamId, descendantTeamId);
+    return Boolean(row);
+  }
+
+  listTeamHierarchyLinks(teamId: string): TeamHierarchyLinkRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ancestor_team_id, descendant_team_id, depth, created_at
+         FROM team_hierarchy
+         WHERE ancestor_team_id = ? OR descendant_team_id = ?
+         ORDER BY ancestor_team_id ASC, descendant_team_id ASC`
+      )
+      .all(teamId, teamId);
+    return rows.map((row) => ({
+      ancestor_team_id: String(row.ancestor_team_id),
+      descendant_team_id: String(row.descendant_team_id),
+      depth: normalizeHierarchyDepth(row.depth),
+      created_at: String(row.created_at)
+    }));
   }
 
   updateTeamStatus(teamId: string, status: TeamStatus): TeamRecord | null {
@@ -249,16 +416,43 @@ export class SqliteStore {
     return this.getTeam(teamId);
   }
 
+  updateTeamMode(teamId: string, mode: TeamMode): TeamRecord | null {
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE teams SET mode = ?, updated_at = ?, last_active_at = ? WHERE team_id = ?')
+        .run(mode, nowIso(), nowIso(), teamId);
+    });
+    return this.getTeam(teamId);
+  }
+
+  updateTeamMetadata(teamId: string, metadataPatch: Record<string, unknown>): TeamRecord | null {
+    const team = this.getTeam(teamId);
+    if (!team) return null;
+
+    const mergedMetadata = {
+      ...(team.metadata ?? {}),
+      ...metadataPatch
+    };
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE teams SET metadata_json = ?, updated_at = ?, last_active_at = ? WHERE team_id = ?')
+        .run(JSON.stringify(mergedMetadata), nowIso(), nowIso(), teamId);
+    });
+    return this.getTeam(teamId);
+  }
+
   createAgent(agent: AgentCreateInput): AgentRecord | null {
     this.runWithRetry(() => {
       this.db
-        .prepare('INSERT INTO agents(agent_id, team_id, role, status, model, created_at, updated_at, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?)')
+        .prepare('INSERT INTO agents(agent_id, team_id, role, status, model, last_heartbeat_at, created_at, updated_at, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(
           agent.agent_id,
           agent.team_id,
           agent.role,
           agent.status,
           agent.model ?? null,
+          agent.last_heartbeat_at ?? null,
           agent.created_at,
           agent.updated_at ?? agent.created_at,
           JSON.stringify(agent.metadata ?? {})
@@ -285,6 +479,15 @@ export class SqliteStore {
   updateAgentStatus(agentId: string, status: AgentRecord['status']): AgentRecord | null {
     this.runWithRetry(() => {
       this.db.prepare('UPDATE agents SET status = ?, updated_at = ? WHERE agent_id = ?').run(status, nowIso(), agentId);
+    });
+    return this.getAgent(agentId);
+  }
+
+  heartbeatAgent(agentId: string, at = nowIso()): AgentRecord | null {
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE agents SET last_heartbeat_at = ?, updated_at = ? WHERE agent_id = ?')
+        .run(at, at, agentId);
     });
     return this.getAgent(agentId);
   }
@@ -473,7 +676,7 @@ export class SqliteStore {
     this.runWithRetry(() => {
       this.db
         .prepare(
-          'INSERT INTO tasks(task_id, team_id, title, description, required_role, status, priority, claimed_by, lock_version, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO tasks(task_id, team_id, title, description, required_role, status, priority, claimed_by, lease_owner_agent_id, lease_expires_at, lock_version, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )
         .run(
           task.task_id,
@@ -484,6 +687,8 @@ export class SqliteStore {
           task.status,
           task.priority,
           task.claimed_by ?? null,
+          task.lease_owner_agent_id ?? null,
+          task.lease_expires_at ?? null,
           task.lock_version ?? 0,
           task.created_at,
           task.updated_at
@@ -532,12 +737,13 @@ export class SqliteStore {
     }
 
     let changes = 0;
+    const leaseExpiresAt = new Date(Date.now() + DEFAULT_TASK_LEASE_MS).toISOString();
     this.runWithRetry(() => {
       const result = this.db
         .prepare(
-          'UPDATE tasks SET claimed_by = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
+          'UPDATE tasks SET claimed_by = ?, status = ?, lease_owner_agent_id = ?, lease_expires_at = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
         )
-        .run(agent_id, 'in_progress', nowIso(), team_id, task_id, expected_lock_version);
+        .run(agent_id, 'in_progress', agent_id, leaseExpiresAt, nowIso(), team_id, task_id, expected_lock_version);
       changes = Number(result.changes || 0);
     });
 
@@ -571,18 +777,21 @@ export class SqliteStore {
       required_role: patch.required_role ?? current.required_role,
       priority: patch.priority ?? current.priority
     };
+    const clearLease = next.status === 'done' || next.status === 'cancelled';
 
     let changes = 0;
     this.runWithRetry(() => {
       const result = this.db
         .prepare(
-          'UPDATE tasks SET status = ?, description = ?, required_role = ?, priority = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
+          'UPDATE tasks SET status = ?, description = ?, required_role = ?, priority = ?, lease_owner_agent_id = ?, lease_expires_at = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
         )
         .run(
           next.status,
           next.description,
           next.required_role ?? null,
           next.priority,
+          clearLease ? null : current.lease_owner_agent_id ?? null,
+          clearLease ? null : current.lease_expires_at ?? null,
           nowIso(),
           team_id,
           task_id,
@@ -739,7 +948,17 @@ export class SqliteStore {
   }
 
   listActiveTeams(): TeamRecord[] {
-    return this.db.prepare('SELECT * FROM teams WHERE status = ? ORDER BY last_active_at ASC').all('active') as unknown as TeamRecord[];
+    const rows = this.db
+      .prepare('SELECT * FROM teams WHERE status = ? ORDER BY last_active_at ASC')
+      .all('active');
+    return rows.map((row) => ({
+      ...row,
+      parent_team_id: normalizeTeamId(row.parent_team_id),
+      root_team_id: normalizeTeamId(row.root_team_id) ?? String(row.team_id),
+      hierarchy_depth: normalizeHierarchyDepth(row.hierarchy_depth),
+      mode: normalizeTeamMode(row.mode),
+      metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
+    })) as TeamRecord[];
   }
 
   logEvent(event: RunEventRecord): void {
@@ -1093,5 +1312,195 @@ export class SqliteStore {
       )
       .all(teamId, limit);
     return rows as unknown as TaskRecord[];
+  }
+
+  acquireTaskLease({
+    team_id,
+    task_id,
+    agent_id,
+    lease_ms = DEFAULT_TASK_LEASE_MS,
+    expected_lock_version = null
+  }: {
+    team_id: string;
+    task_id: string;
+    agent_id: string;
+    lease_ms?: number;
+    expected_lock_version?: number | null;
+  }): TaskMutationResult {
+    const current = this.db.prepare('SELECT * FROM tasks WHERE team_id = ? AND task_id = ?').get(team_id, task_id);
+    if (!current) {
+      return { ok: false, error: `task not found: ${task_id}` };
+    }
+    if (current.status !== 'in_progress') {
+      return { ok: false, error: `task lease requires in_progress status (current: ${current.status})` };
+    }
+    if (expected_lock_version !== null && current.lock_version !== expected_lock_version) {
+      return { ok: false, error: `lock conflict for task ${task_id}: expected ${expected_lock_version}, actual ${current.lock_version}` };
+    }
+
+    const expiresAtMs = Date.parse(String(current.lease_expires_at ?? ''));
+    const expired = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+    const owner = current.lease_owner_agent_id ? String(current.lease_owner_agent_id) : null;
+    const canAcquire = !owner || owner === agent_id || expired;
+    if (!canAcquire) {
+      return { ok: false, error: `lease is currently held by ${owner}` };
+    }
+
+    const safeLeaseMs = Math.max(1, Math.floor(Number(lease_ms) || DEFAULT_TASK_LEASE_MS));
+    const leaseExpiresAt = new Date(Date.now() + safeLeaseMs).toISOString();
+    let changes = 0;
+    this.runWithRetry(() => {
+      const result = this.db
+        .prepare(
+          'UPDATE tasks SET lease_owner_agent_id = ?, lease_expires_at = ?, lock_version = lock_version + 1, updated_at = ? WHERE team_id = ? AND task_id = ? AND lock_version = ?'
+        )
+        .run(agent_id, leaseExpiresAt, nowIso(), team_id, task_id, current.lock_version);
+      changes = Number(result.changes || 0);
+    });
+    if (changes === 0) {
+      const latest = this.getTask(task_id);
+      return { ok: false, error: `lock conflict for task ${task_id}: actual ${latest?.lock_version ?? 'unknown'}` };
+    }
+
+    return { ok: true, task: this.getTask(task_id) };
+  }
+
+  renewTaskLease({
+    team_id,
+    task_id,
+    agent_id,
+    lease_ms = DEFAULT_TASK_LEASE_MS
+  }: {
+    team_id: string;
+    task_id: string;
+    agent_id: string;
+    lease_ms?: number;
+  }): TaskMutationResult {
+    const current = this.db.prepare('SELECT * FROM tasks WHERE team_id = ? AND task_id = ?').get(team_id, task_id);
+    if (!current) {
+      return { ok: false, error: `task not found: ${task_id}` };
+    }
+    if (String(current.lease_owner_agent_id ?? '') !== agent_id) {
+      return { ok: false, error: `lease owner mismatch for task ${task_id}` };
+    }
+
+    const safeLeaseMs = Math.max(1, Math.floor(Number(lease_ms) || DEFAULT_TASK_LEASE_MS));
+    const leaseExpiresAt = new Date(Date.now() + safeLeaseMs).toISOString();
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE tasks SET lease_expires_at = ?, updated_at = ? WHERE team_id = ? AND task_id = ?')
+        .run(leaseExpiresAt, nowIso(), team_id, task_id);
+    });
+    return { ok: true, task: this.getTask(task_id) };
+  }
+
+  releaseTaskLease({
+    team_id,
+    task_id,
+    agent_id
+  }: {
+    team_id: string;
+    task_id: string;
+    agent_id: string;
+  }): TaskMutationResult {
+    const current = this.db.prepare('SELECT * FROM tasks WHERE team_id = ? AND task_id = ?').get(team_id, task_id);
+    if (!current) {
+      return { ok: false, error: `task not found: ${task_id}` };
+    }
+    if (String(current.lease_owner_agent_id ?? '') !== agent_id) {
+      return { ok: false, error: `lease owner mismatch for task ${task_id}` };
+    }
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE tasks SET lease_owner_agent_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE team_id = ? AND task_id = ?')
+        .run(nowIso(), team_id, task_id);
+    });
+    return { ok: true, task: this.getTask(task_id) };
+  }
+
+  listExpiredTaskLeases(team_id: string, now = nowIso()): TaskRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM tasks
+         WHERE team_id = ?
+           AND status = 'in_progress'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= ?
+         ORDER BY lease_expires_at ASC, updated_at ASC`
+      )
+      .all(team_id, now);
+    return rows as unknown as TaskRecord[];
+  }
+
+  recoverExpiredTaskLeases(team_id: string, now = nowIso()): { recovered: number; tasks: TaskRecord[] } {
+    const expired = this.listExpiredTaskLeases(team_id, now);
+    if (!expired.length) {
+      return { recovered: 0, tasks: [] };
+    }
+
+    const update = this.db.prepare(
+      `UPDATE tasks
+       SET status = 'todo',
+           claimed_by = NULL,
+           lease_owner_agent_id = NULL,
+           lease_expires_at = NULL,
+           lock_version = lock_version + 1,
+           updated_at = ?
+       WHERE team_id = ?
+         AND task_id = ?
+         AND status = 'in_progress'
+         AND lease_expires_at IS NOT NULL
+         AND lease_expires_at <= ?`
+    );
+
+    let recovered = 0;
+    this.runWithRetry(() => {
+      for (const task of expired) {
+        const result = update.run(nowIso(), team_id, task.task_id, now);
+        recovered += Number(result.changes || 0);
+      }
+    });
+
+    const tasks = expired
+      .map((task) => this.getTask(task.task_id))
+      .filter((task): task is TaskRecord => Boolean(task));
+
+    return { recovered, tasks };
+  }
+
+  markStaleAgentsOffline(team_id: string, cutoff_iso: string): { marked_offline: number; agents: AgentRecord[] } {
+    const candidates = this.db
+      .prepare(
+        `SELECT *
+         FROM agents
+         WHERE team_id = ?
+           AND status != 'offline'
+           AND COALESCE(last_heartbeat_at, created_at) <= ?
+         ORDER BY updated_at ASC, agent_id ASC`
+      )
+      .all(team_id, cutoff_iso) as unknown as AgentRecord[];
+
+    if (!candidates.length) {
+      return { marked_offline: 0, agents: [] };
+    }
+
+    let marked = 0;
+    this.runWithRetry(() => {
+      const update = this.db.prepare('UPDATE agents SET status = ?, updated_at = ? WHERE team_id = ? AND agent_id = ? AND status != ?');
+      for (const agent of candidates) {
+        const result = update.run('offline', nowIso(), team_id, agent.agent_id, 'offline');
+        marked += Number(result.changes || 0);
+      }
+    });
+
+    const agents = candidates
+      .map((agent) => this.getAgent(agent.agent_id))
+      .filter((agent): agent is AgentRecord => Boolean(agent));
+    return {
+      marked_offline: marked,
+      agents
+    };
   }
 }

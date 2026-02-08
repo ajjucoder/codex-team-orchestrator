@@ -1,6 +1,10 @@
 export interface TeamEntityContract {
   team_id: string;
+  parent_team_id?: string | null;
+  root_team_id?: string;
+  hierarchy_depth?: number;
   status: 'active' | 'idle' | 'paused' | 'finalized' | 'archived';
+  mode?: 'default' | 'delegate' | 'plan';
   profile: string;
   objective?: string;
   max_threads: number;
@@ -69,23 +73,44 @@ export interface ArtifactEntityContract {
   metadata?: Record<string, unknown>;
 }
 
+export interface PermissionProfileEntityContract {
+  allow_all_tools: boolean;
+  tools?: Record<string, boolean>;
+}
+
+export interface PermissionDecisionAuditContract {
+  allowed: boolean;
+  evaluated: boolean;
+  source_profile: string | null;
+  matched_rule: string;
+  deny_reason: string | null;
+  action?: string | null;
+  actor_agent_id?: string | null;
+  actor_role?: string | null;
+}
+
 export interface EntityContracts {
   'team.schema.json': TeamEntityContract;
   'agent.schema.json': AgentEntityContract;
   'message.schema.json': MessageEntityContract;
   'task.schema.json': TaskEntityContract;
   'artifact.schema.json': ArtifactEntityContract;
+  'permission_profile.schema.json': PermissionProfileEntityContract;
 }
 
 export interface ToolInputContracts {
   'team_artifact_list.schema.json': { team_id: string };
   'team_artifact_publish.schema.json': { team_id: string; name: string; content: string; artifact_id?: string; published_by?: string; metadata?: Record<string, unknown> };
   'team_artifact_read.schema.json': { team_id: string; artifact_id: string; version?: number };
+  'team_agent_heartbeat.schema.json': { team_id: string; agent_id: string; heartbeat_at?: string };
   'team_broadcast.schema.json': { team_id: string; from_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
   'team_finalize.schema.json': { team_id: string; reason?: string };
   'team_guardrail_check.schema.json': { team_id: string; consensus_reached: boolean; open_tasks: number };
   'team_idle_sweep.schema.json': { now_iso?: string };
   'team_merge_decide.schema.json': { team_id: string; proposal_id: string; strategy: 'consensus' | 'lead' | 'strict_vote'; votes: Array<{ agent_id: string; decision: 'approve' | 'reject' }>; lead_agent_id?: string };
+  'team_mode_get.schema.json': { team_id: string };
+  'team_mode_set.schema.json': { team_id: string; mode: 'default' | 'delegate' | 'plan'; reason?: string; ttl_ms?: number; requested_by_agent_id?: string };
+  'team_orphan_recover.schema.json': { team_id: string; now_iso?: string; agent_stale_ms?: number };
   'team_plan_fanout.schema.json': { team_id: string; task_size: 'small' | 'medium' | 'high'; estimated_parallel_tasks: number; budget_tokens_remaining: number; token_cost_per_agent?: number; planned_roles?: string[] };
   'team_policy_get.schema.json': { team_id: string };
   'team_policy_set_profile.schema.json': { team_id: string; profile: string };
@@ -97,14 +122,17 @@ export interface ToolInputContracts {
   'team_send.schema.json': { team_id: string; from_agent_id: string; to_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
   'team_spawn.schema.json': { team_id: string; role: string; model?: string };
   'team_spawn_ready_roles.schema.json': { team_id: string; max_new_agents?: number };
-  'team_start.schema.json': { objective: string; profile?: string; max_threads?: number; session_model?: string };
+  'team_start.schema.json': { objective: string; profile?: string; max_threads?: number; session_model?: string; parent_team_id?: string };
   'team_status.schema.json': { team_id: string };
   'team_task_cancel_others.schema.json': { team_id: string; winner_task_id: string; loser_task_ids: string[]; reason?: string };
   'team_task_claim.schema.json': { team_id: string; task_id: string; agent_id: string; expected_lock_version: number };
   'team_task_create.schema.json': { team_id: string; title: string; priority: number; description?: string; required_role?: string; depends_on_task_ids?: string[] };
+  'team_task_lease_acquire.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number; expected_lock_version?: number };
+  'team_task_lease_release.schema.json': { team_id: string; task_id: string; agent_id: string };
+  'team_task_lease_renew.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number };
   'team_task_list.schema.json': { team_id: string; status?: string };
   'team_task_next.schema.json': { team_id: string; limit?: number };
-  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: string; description?: string; priority?: number; required_role?: string; depends_on_task_ids?: string[] };
+  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: string; description?: string; priority?: number; required_role?: string; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
   'team_trigger.schema.json': { prompt: string; profile?: string; task_size?: 'small' | 'medium' | 'high'; max_threads?: number; auto_spawn?: boolean; estimated_parallel_tasks?: number; budget_tokens_remaining?: number; token_cost_per_agent?: number; active_session_model?: string };
 }
 
@@ -125,18 +153,23 @@ export const ENTITY_REQUIRED_FIELDS = {
   'agent.schema.json': ['agent_id', 'team_id', 'role', 'status', 'created_at'],
   'message.schema.json': ['message_id', 'team_id', 'from_agent_id', 'delivery_mode', 'payload', 'idempotency_key', 'created_at'],
   'task.schema.json': ['task_id', 'team_id', 'title', 'status', 'priority', 'created_at'],
-  'artifact.schema.json': ['artifact_id', 'team_id', 'name', 'version', 'checksum', 'content', 'created_at']
+  'artifact.schema.json': ['artifact_id', 'team_id', 'name', 'version', 'checksum', 'content', 'created_at'],
+  'permission_profile.schema.json': ['allow_all_tools']
 } as const satisfies Record<keyof EntityContracts, readonly string[]>;
 
 export const TOOL_REQUIRED_FIELDS = {
   'team_artifact_list.schema.json': ['team_id'],
   'team_artifact_publish.schema.json': ['team_id', 'name', 'content'],
   'team_artifact_read.schema.json': ['team_id', 'artifact_id'],
+  'team_agent_heartbeat.schema.json': ['team_id', 'agent_id'],
   'team_broadcast.schema.json': ['team_id', 'from_agent_id', 'summary', 'idempotency_key'],
   'team_finalize.schema.json': ['team_id'],
   'team_guardrail_check.schema.json': ['team_id', 'consensus_reached', 'open_tasks'],
   'team_idle_sweep.schema.json': [],
   'team_merge_decide.schema.json': ['team_id', 'proposal_id', 'strategy', 'votes'],
+  'team_mode_get.schema.json': ['team_id'],
+  'team_mode_set.schema.json': ['team_id', 'mode'],
+  'team_orphan_recover.schema.json': ['team_id'],
   'team_plan_fanout.schema.json': ['team_id', 'task_size', 'estimated_parallel_tasks', 'budget_tokens_remaining'],
   'team_policy_get.schema.json': ['team_id'],
   'team_policy_set_profile.schema.json': ['team_id', 'profile'],
@@ -153,6 +186,9 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_task_cancel_others.schema.json': ['team_id', 'winner_task_id', 'loser_task_ids'],
   'team_task_claim.schema.json': ['team_id', 'task_id', 'agent_id', 'expected_lock_version'],
   'team_task_create.schema.json': ['team_id', 'title', 'priority'],
+  'team_task_lease_acquire.schema.json': ['team_id', 'task_id', 'agent_id'],
+  'team_task_lease_release.schema.json': ['team_id', 'task_id', 'agent_id'],
+  'team_task_lease_renew.schema.json': ['team_id', 'task_id', 'agent_id'],
   'team_task_list.schema.json': ['team_id'],
   'team_task_next.schema.json': ['team_id'],
   'team_task_update.schema.json': ['team_id', 'task_id', 'expected_lock_version'],

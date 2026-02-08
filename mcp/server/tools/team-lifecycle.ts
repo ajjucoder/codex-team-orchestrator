@@ -1,5 +1,6 @@
 import type { ToolContext, ToolServerLike } from './types.js';
 import { newId } from '../ids.js';
+import { validatePermissionConfig } from '../permission-profiles.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -15,6 +16,12 @@ function readOptionalString(input: Record<string, unknown>, key: string): string
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalTeamId(input: Record<string, unknown>, key: string): string | null {
+  const value = readOptionalString(input, key);
+  if (!value) return null;
+  return value.startsWith('team_') ? value : null;
 }
 
 function readOptionalNumber(input: Record<string, unknown>, key: string): number | null {
@@ -38,7 +45,24 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
   server.registerTool('team_start', 'team_start.schema.json', (input, context = {}) => {
     const ts = nowIso();
     const profileName = readOptionalString(input, 'profile') ?? 'default';
+    const parentTeamId = readOptionalTeamId(input, 'parent_team_id');
+    if (input.parent_team_id !== undefined && !parentTeamId) {
+      return { ok: false, error: 'invalid parent_team_id' };
+    }
+    if (parentTeamId) {
+      const parentTeam = server.store.getTeam(parentTeamId);
+      if (!parentTeam) {
+        return { ok: false, error: `parent team not found: ${parentTeamId}` };
+      }
+    }
     const policy = server.policyEngine?.loadProfile(profileName) ?? {};
+    const permissionValidation = validatePermissionConfig(policy);
+    if (!permissionValidation.ok) {
+      return {
+        ok: false,
+        error: `invalid permissions config for profile ${profileName}: ${permissionValidation.errors.join('; ')}`
+      };
+    }
     const limits = (
       policy.limits && typeof policy.limits === 'object'
         ? policy.limits as Record<string, unknown>
@@ -56,7 +80,9 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
     const explicitSessionModel = readOptionalString(input, 'session_model');
     const team = server.store.createTeam({
       team_id: newId('team'),
+      parent_team_id: parentTeamId,
       status: 'active',
+      mode: 'default',
       profile: profileName,
       objective: readOptionalString(input, 'objective'),
       max_threads: maxThreads,
@@ -108,7 +134,11 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
       ok: true,
       team: {
         team_id: team.team_id,
+        parent_team_id: team.parent_team_id,
+        root_team_id: team.root_team_id,
+        hierarchy_depth: team.hierarchy_depth,
         status: team.status,
+        mode: team.mode,
         profile: team.profile,
         objective: team.objective,
         max_threads: team.max_threads,
