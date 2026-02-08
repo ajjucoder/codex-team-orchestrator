@@ -10,7 +10,8 @@ Primary operating model:
 4. System must reduce token/tool usage versus fixed fan-out while maintaining quality.
 
 ## Trigger
-- Required trigger phrase: `use agent teams`
+- Required trigger phrase: `use agents team`
+- Legacy alias accepted: `use agent teams`
 
 ## Start Command for Build Agent (Strict Manager Prompt)
 Use this exact prompt to start implementation:
@@ -159,7 +160,7 @@ Use this for every ticket before moving to the next:
 | AT-019 | AT-018 | [ ] | [ ] | [ ] | [ ] | [ ] |
 
 ## Global Acceptance Criteria
-1. `use agent teams` automatically triggers orchestration.
+1. `use agents team` automatically triggers orchestration (legacy alias `use agent teams` also accepted).
 2. Peer communication works through message bus.
 3. Team size auto-scales but never exceeds 6.
 4. Default model inheritance is preserved.

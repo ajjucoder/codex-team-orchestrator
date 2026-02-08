@@ -24,14 +24,17 @@ afterEach(() => {
 });
 
 test('AT-015 trigger detection is case-insensitive and exact phrase-based', () => {
+  assert.equal(hasAgentTeamsTrigger('Please USE AGENTS TEAM for this run'), true);
   assert.equal(hasAgentTeamsTrigger('Please USE AGENT TEAMS for this run'), true);
   assert.equal(hasAgentTeamsTrigger('use teams'), false);
-  assert.equal(REQUIRED_TRIGGER_PHRASE, 'use agent teams');
+  assert.equal(REQUIRED_TRIGGER_PHRASE, 'use agents team');
 });
 
 test('AT-015 objective extraction removes trigger phrase', () => {
-  const objective = extractObjectiveFromPrompt('use agent teams implement ticket AT-015');
-  assert.equal(objective, 'implement ticket AT-015');
+  const canonicalObjective = extractObjectiveFromPrompt('use agents team implement ticket AT-015');
+  const legacyAliasObjective = extractObjectiveFromPrompt('use agent teams implement ticket AT-015');
+  assert.equal(canonicalObjective, 'implement ticket AT-015');
+  assert.equal(legacyAliasObjective, 'implement ticket AT-015');
 });
 
 test('AT-015 infers task size from prompt complexity signals', () => {

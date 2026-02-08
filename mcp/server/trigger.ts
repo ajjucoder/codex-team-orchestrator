@@ -1,4 +1,5 @@
-export const REQUIRED_TRIGGER_PHRASE = 'use agent teams';
+export const REQUIRED_TRIGGER_PHRASE = 'use agents team';
+export const TRIGGER_PHRASE_ALIASES = [REQUIRED_TRIGGER_PHRASE, 'use agent teams'] as const;
 
 type TaskSize = 'small' | 'medium' | 'high';
 
@@ -6,17 +7,24 @@ function normalizePrompt(prompt: unknown): string {
   return typeof prompt === 'string' ? prompt : '';
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function hasAgentTeamsTrigger(prompt: unknown): boolean {
-  const normalized = normalizePrompt(prompt);
+  const normalized = normalizePrompt(prompt).toLowerCase();
   if (!normalized) return false;
-  return normalized.toLowerCase().includes(REQUIRED_TRIGGER_PHRASE);
+  return TRIGGER_PHRASE_ALIASES.some((phrase) => normalized.includes(phrase));
 }
 
 export function extractObjectiveFromPrompt(prompt: unknown): string {
   const normalized = normalizePrompt(prompt);
   if (!normalized) return 'Execute requested objective';
-  const withoutTrigger = normalized
-    .replace(/use agent teams/gi, ' ')
+  const withoutTrigger = TRIGGER_PHRASE_ALIASES
+    .reduce(
+      (acc, phrase) => acc.replace(new RegExp(escapeRegExp(phrase), 'gi'), ' '),
+      normalized
+    )
     .replace(/\s+/g, ' ')
     .trim();
   return withoutTrigger || 'Execute requested objective';

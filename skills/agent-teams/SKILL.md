@@ -1,6 +1,7 @@
 # Agent Teams Skill
 
-Trigger phrase: `use agent teams`
+Trigger phrase: `use agents team`
+Legacy alias accepted: `use agent teams`
 
 Purpose:
 - Enable Codex-led team orchestration with worker specialization, shared task board, and compact artifact exchange.

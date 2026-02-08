@@ -24,7 +24,7 @@ test('AT-015 integration: trigger phrase creates orchestration team and logs inv
   registerTriggerTools(server);
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agent teams deliver milestone M4',
+    prompt: 'use agents team deliver milestone M4',
     profile: 'default',
     max_threads: 4,
     active_session_model: 'gpt-5-codex'
@@ -54,7 +54,7 @@ test('AT-015 integration: complexity-based trigger auto-spawns workers within ca
   registerTriggerTools(server);
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agent teams ship a high-complexity refactor across modules with parallel streams',
+    prompt: 'use agents team ship a high-complexity refactor across modules with parallel streams',
     profile: 'deep',
     task_size: 'high',
     max_threads: 6,
@@ -103,7 +103,7 @@ test('AT-015 integration: trigger fanout planning defaults to telemetry estimato
   }
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agent teams build medium scope workstream',
+    prompt: 'use agents team build medium scope workstream',
     profile: 'default',
     task_size: 'medium',
     auto_spawn: false,
