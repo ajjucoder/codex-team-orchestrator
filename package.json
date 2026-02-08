@@ -17,8 +17,10 @@
     "test:integration:ts": "node --import tsx --test tests/integration/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "build:types": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly --declaration --declarationMap false --outDir dist/types",
+    "baseline:v2": "./scripts/v2-baseline.sh",
     "verify": "./scripts/verify.sh",
     "benchmark": "./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive",
+    "gates:v2": "node --import tsx ./scripts/v2-eval-gates.ts --report .tmp/v2-release-benchmark-report.json --min-quality 0.95 --max-quality-drop 0 --min-token-reduction 1",
     "release:package": "./scripts/package-release.sh",
     "release:check": "./scripts/release-ready.sh"
   },
