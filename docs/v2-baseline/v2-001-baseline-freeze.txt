@@ -1,0 +1,66 @@
+# V2-001 Baseline Freeze Evidence
+
+## Command
+./scripts/v2-baseline.sh --write
+
+## Output
+v2-baseline:mode=write
+v2-baseline:fixture=tests/fixtures/v2-001-baseline.snapshot.json
+v2-baseline:ok
+
+## Command
+./scripts/v2-baseline.sh
+
+## Output
+v2-baseline:mode=verify
+v2-baseline:fixture=tests/fixtures/v2-001-baseline.snapshot.json
+v2-baseline:ok
+
+## Command
+npm run typecheck
+
+## Output
+> codex-team-orchestrator@1.0.0 typecheck
+> tsc -p tsconfig.json
+
+## Command
+npm run test:unit
+
+## Output
+ℹ tests 70
+ℹ pass 70
+ℹ fail 0
+
+## Command
+npm run test:integration
+
+## Output
+ℹ tests 31
+ℹ pass 31
+ℹ fail 0
+
+## Command
+./scripts/verify.sh
+
+## Output
+smoke:mode=small
+smoke:threads=2
+smoke:ok
+smoke:mode=medium
+smoke:threads=4
+smoke:ok
+smoke:mode=high
+smoke:threads=6
+smoke:ok
+benchmark:baseline=fixed-6
+benchmark:candidate=adaptive
+benchmark:mode=replay
+benchmark:median_tokens_baseline=10938
+benchmark:median_tokens_candidate=9643
+benchmark:median_quality_baseline=1
+benchmark:median_quality_candidate=1
+benchmark:delta_tokens=-1295
+benchmark:delta_quality=0
+benchmark:delta_time_ms=-2
+benchmark:pass=true
+verify:ok

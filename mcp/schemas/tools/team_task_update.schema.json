@@ -12,6 +12,9 @@
       "type": "array",
       "items": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]+$" }
     },
+    "quality_checks_passed": { "type": "boolean" },
+    "artifact_refs_count": { "type": "integer", "minimum": 0 },
+    "compliance_ack": { "type": "boolean" },
     "expected_lock_version": { "type": "integer", "minimum": 0 }
   },
   "additionalProperties": false

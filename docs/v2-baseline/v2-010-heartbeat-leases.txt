@@ -1,0 +1,16 @@
+$ node --import tsx --test tests/unit/v2-010.heartbeat-leases.test.ts tests/integration/v2-010.heartbeat-leases.integration.test.ts
+✔ V2-010 store lease lifecycle supports contention, expiry recovery, renew, and release
+✔ V2-010 integration: lease tools enforce contention and stale-lease recovery
+pass 2, fail 0
+
+$ node --import tsx --test tests/unit/at003.sqlite-store.test.ts tests/integration/at003.sqlite-store.integration.test.ts
+✔ AT-003 sqlite store suite
+pass 4, fail 0
+
+$ node --import tsx --test tests/unit/at002.schemas.test.ts
+✔ AT-002 schema suite
+pass 7, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

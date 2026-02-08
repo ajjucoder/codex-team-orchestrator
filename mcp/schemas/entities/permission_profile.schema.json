@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["allow_all_tools"],
+  "additionalProperties": false,
+  "properties": {
+    "allow_all_tools": { "type": "boolean" },
+    "tools": { "type": "object" }
+  }
+}

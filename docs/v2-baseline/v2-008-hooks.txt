@@ -1,0 +1,15 @@
+$ node --import tsx --test tests/unit/v2-008.hooks.test.ts tests/integration/v2-008.hooks.integration.test.ts
+✔ V2-008 hook engine enforces ordered pre-hook block semantics
+✔ V2-008 hook engine supports timeout behavior with fail-open override
+✔ V2-008 post hooks are traced without blocking tool completion
+✔ V2-008 integration: lifecycle hook points execute for spawn/claim/complete/finalize/resume
+✔ V2-008 integration: blocking pre-hook rejects unsafe operation with trace
+pass 5, fail 0
+
+$ node --import tsx --test tests/unit/at004.server.test.ts tests/integration/at004.server.integration.test.ts
+✔ AT-004 server suite
+pass 3, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

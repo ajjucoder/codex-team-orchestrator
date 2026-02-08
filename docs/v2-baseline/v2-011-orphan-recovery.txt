@@ -1,0 +1,16 @@
+$ node --import tsx --test tests/unit/v2-011.orphan-recovery.test.ts tests/integration/v2-011.orphan-recovery.integration.test.ts
+✔ V2-011 store orphan recovery is deterministic and idempotent
+✔ V2-011 integration: crash-restart recovery requeues orphaned work deterministically
+pass 2, fail 0
+
+$ node --import tsx --test tests/unit/at006.agent-lifecycle.test.ts tests/integration/at006.agent-lifecycle.integration.test.ts
+✔ AT-006 suite (unit+integration)
+pass 10, fail 0
+
+$ node --import tsx --test tests/unit/at002.schemas.test.ts
+✔ AT-002 schema suite
+pass 7, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

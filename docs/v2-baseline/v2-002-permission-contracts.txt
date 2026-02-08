@@ -1,0 +1,58 @@
+# V2-002 Permission Profile Model and Contracts Evidence
+
+## Command
+npm run typecheck
+
+## Output
+> codex-team-orchestrator@1.0.0 typecheck
+> tsc -p tsconfig.json
+
+## Command
+node --import tsx --test tests/unit/v2-002.permissions.test.ts
+
+## Output
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+
+## Command
+node --import tsx --test tests/integration/v2-002.permissions.integration.test.ts
+
+## Output
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0
+
+## Command
+npm run test:unit
+
+## Output
+ℹ tests 75
+ℹ pass 75
+ℹ fail 0
+
+## Command
+npm run test:integration
+
+## Output
+ℹ tests 33
+ℹ pass 33
+ℹ fail 0
+
+## Command
+./scripts/verify.sh
+
+## Output
+check-config:profiles=ok
+check-config:ok
+smoke:mode=small
+smoke:threads=2
+smoke:ok
+smoke:mode=medium
+smoke:threads=4
+smoke:ok
+smoke:mode=high
+smoke:threads=6
+smoke:ok
+benchmark:pass=true
+verify:ok

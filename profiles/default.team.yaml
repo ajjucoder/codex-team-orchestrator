@@ -21,3 +21,9 @@ arbitration:
 model_routing:
   enabled: false
   mode: inherit_session_model
+permissions:
+  profiles:
+    unrestricted:
+      allow_all_tools: true
+  role_binding:
+    default: unrestricted

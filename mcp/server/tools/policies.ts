@@ -1,4 +1,5 @@
 import type { ToolServerLike } from './types.js';
+import { validatePermissionConfig } from '../permission-profiles.js';
 
 function readString(input: Record<string, unknown>, key: string): string {
   const value = input[key];
@@ -41,6 +42,13 @@ export function registerPolicyTools(server: ToolServerLike): void {
     }
 
     const profile = server.policyEngine?.loadProfile(profileName) ?? {};
+    const permissionValidation = validatePermissionConfig(profile);
+    if (!permissionValidation.ok) {
+      return {
+        ok: false,
+        error: `invalid permissions config for profile ${profileName}: ${permissionValidation.errors.join('; ')}`
+      };
+    }
     const maxThreads = Math.min(
       readPolicyLimit(profile, 'default_max_threads', team.max_threads),
       readPolicyLimit(profile, 'hard_max_threads', 6),

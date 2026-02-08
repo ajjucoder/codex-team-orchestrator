@@ -23,11 +23,16 @@ done
 
 node --import tsx --input-type=module -e "
 import { PolicyEngine } from './mcp/server/policy-engine.ts';
+import { validatePermissionConfig } from './mcp/server/permission-profiles.ts';
 const engine = new PolicyEngine('profiles');
 for (const p of ['default', 'fast', 'deep']) {
   const loaded = engine.loadProfile(p);
   if (!loaded || loaded.profile !== p) {
     throw new Error('invalid profile: ' + p);
+  }
+  const permissions = validatePermissionConfig(loaded);
+  if (!permissions.ok) {
+    throw new Error('invalid permissions profile config for ' + p + ': ' + permissions.errors.join('; '));
   }
 }
 console.log('check-config:profiles=ok');

@@ -1,0 +1,11 @@
+$ node --import tsx --test tests/unit/v2-004.permissions-observability.test.ts
+✔ V2-004 permission decision metadata is emitted in store events and logs
+pass 1, fail 0
+
+$ node --import tsx --test tests/integration/v2-004.permissions-observability.integration.test.ts
+✔ V2-004 integration: replay contains deterministic permission audit trail
+pass 1, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

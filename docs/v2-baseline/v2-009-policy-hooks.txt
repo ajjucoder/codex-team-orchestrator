@@ -1,0 +1,12 @@
+$ node --import tsx --test tests/unit/v2-009.policy-hooks.test.ts tests/integration/v2-009.policy-hooks.integration.test.ts
+✔ V2-009 builtin quality hook blocks task completion when configured quality gates fail
+✔ V2-009 integration: quality hooks block completion until configured gates pass
+pass 2, fail 0
+
+$ node --import tsx --test tests/unit/at007.task-board.test.ts tests/integration/at007.task-board.integration.test.ts
+✔ AT-007 suite (unit+integration)
+pass 10, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

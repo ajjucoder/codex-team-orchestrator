@@ -1,0 +1,81 @@
+{
+  "schema_version": "v2-001",
+  "scenario": "core_orchestration_contract",
+  "team": {
+    "profile": "default",
+    "max_threads": 3,
+    "session_model": "gpt-5-codex",
+    "status": "active",
+    "policy_profile": "default"
+  },
+  "agent_flow": {
+    "spawned_roles": [
+      "lead",
+      "implementer",
+      "reviewer"
+    ],
+    "inherited_model_sources": [
+      "session_inherited",
+      "session_inherited",
+      "session_inherited"
+    ],
+    "max_threads_rejection": {
+      "rejected": true,
+      "error_contains": true
+    }
+  },
+  "task_flow": {
+    "dependency_blocked_on_create": true,
+    "ready_queue_before_done_count": 1,
+    "foundation_claimed_by_implementer": true,
+    "foundation_done_promoted_dependents": 1,
+    "ready_queue_after_done_count": 1,
+    "review_claimed_by_reviewer": true,
+    "all_tasks_done": true
+  },
+  "messaging_flow": {
+    "direct_send_inserted": true,
+    "duplicate_send_suppressed": true,
+    "broadcast_recipient_count": 2,
+    "reviewer_inbox_count": 1,
+    "reviewer_ack_count": 1
+  },
+  "artifact_flow": {
+    "versions": [
+      1,
+      2
+    ],
+    "latest_version": 2,
+    "checksum_changes": true,
+    "latest_list_count": 1
+  },
+  "orchestration": {
+    "fanout_recommended_threads": 3,
+    "fanout_within_medium_band": true,
+    "fanout_budget_source": "explicit_input",
+    "early_stop": true,
+    "early_stop_reason": "consensus reached with no open tasks"
+  },
+  "observability": {
+    "summary_metrics": {
+      "agents": 3,
+      "messages": 2,
+      "artifacts": 2,
+      "tasks_done": 2
+    },
+    "usage_sample_count_positive": true,
+    "replay_event_count_positive": true,
+    "required_event_types_present": true
+  },
+  "security": {
+    "cross_team_send_denied": true,
+    "cross_team_error_contains": true
+  },
+  "health": {
+    "ok": true,
+    "db_status": "ok",
+    "migration_count_at_least_1": true,
+    "max_threads_enforced": true,
+    "trace_logging_ready": true
+  }
+}

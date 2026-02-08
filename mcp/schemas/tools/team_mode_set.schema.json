@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["team_id", "mode"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "mode": { "type": "string", "enum": ["default", "delegate", "plan"] },
+    "reason": { "type": "string" },
+    "ttl_ms": { "type": "integer", "minimum": 1 },
+    "requested_by_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" }
+  },
+  "additionalProperties": false
+}

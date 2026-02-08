@@ -1,0 +1,12 @@
+$ node --import tsx --test tests/unit/v2-003.permission-enforcement.test.ts
+✔ V2-003 evaluatePermissionDecision supports per-action overrides
+✔ V2-003 server enforces per-agent permission profile at runtime
+pass 2, fail 0
+
+$ node --import tsx --test tests/integration/v2-003.permission-enforcement.integration.test.ts
+✔ V2-003 integration: allow/deny matrix enforces per-action runtime permissions
+pass 1, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

@@ -1,0 +1,15 @@
+$ node --import tsx --test tests/unit/v2-005.team-mode.test.ts tests/integration/v2-005.team-mode.integration.test.ts
+✔ V2-005 migration sets existing teams to default mode
+✔ V2-005 store persists explicit mode changes
+✔ V2-005 integration: team mode defaults and is visible via team_status
+pass 3, fail 0
+
+$ node --import tsx --test tests/unit/at005.team-lifecycle.test.ts tests/integration/at005.team-lifecycle.integration.test.ts
+✔ AT-005 team_start creates active team with model inheritance
+✔ AT-005 team_status and finalize transition lifecycle state
+✔ AT-005 integration: lifecycle tools emit structured events and persist state
+pass 3, fail 0
+
+$ npm run typecheck
+tsc -p tsconfig.json
+exit 0

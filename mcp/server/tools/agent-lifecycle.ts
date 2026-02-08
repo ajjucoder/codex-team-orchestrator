@@ -1,6 +1,7 @@
 import type { ToolResult, ToolServerLike } from './types.js';
 import { newId } from '../ids.js';
 import { isKnownRole } from '../role-pack.js';
+import { resolvePermissionProfileName } from '../permission-profiles.js';
 import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
 
 function nowIso(): string {
@@ -177,23 +178,6 @@ function resolveSpawnModel({
   };
 }
 
-function resolvePermissionProfile({
-  policy,
-  role
-}: {
-  policy: Record<string, unknown>;
-  role: string;
-}): string | null {
-  const permissions = (
-    policy.permissions && typeof policy.permissions === 'object'
-      ? policy.permissions as Record<string, unknown>
-      : {}
-  );
-  const roleScoped = pickString(permissions[role]);
-  if (roleScoped) return roleScoped;
-  return pickString(permissions.default);
-}
-
 function normalizeArtifactRefs(artifactRefs: unknown[] = []): ArtifactRef[] {
   return artifactRefs
     .filter(isRecord)
@@ -276,7 +260,7 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       role,
       policy
     });
-    const permissionProfile = resolvePermissionProfile({ policy, role });
+    const permissionProfile = resolvePermissionProfileName(policy, role);
     const agent = server.store.createAgent({
       agent_id: newId('agent'),
       team_id: teamId,
