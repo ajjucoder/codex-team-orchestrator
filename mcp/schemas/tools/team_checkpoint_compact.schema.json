@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["team_id"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "keep_recent_messages": { "type": "integer", "minimum": 0 },
+    "keep_recent_events": { "type": "integer", "minimum": 0 },
+    "checkpoint_name": { "type": "string" }
+  },
+  "additionalProperties": false
+}

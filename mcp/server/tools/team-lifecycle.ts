@@ -29,6 +29,11 @@ function readOptionalNumber(input: Record<string, unknown>, key: string): number
   return Number.isFinite(value) ? value : null;
 }
 
+function readRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 function readContextModel(context: ToolContext): string | null {
   const value = context.active_session_model;
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
@@ -216,6 +221,24 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
       teamId
     );
     const contextAgentId = typeof context.agent_id === 'string' ? context.agent_id : null;
+    const checkpoint = readRecord(resumedTeam.metadata?.context_checkpoint);
+    const reset = readRecord(resumedTeam.metadata?.context_reset);
+    const checkpointSnapshot = checkpoint.artifact_id
+      ? {
+        artifact_id: String(checkpoint.artifact_id),
+        version: Number(checkpoint.version ?? 0),
+        checksum: String(checkpoint.checksum ?? ''),
+        created_at: String(checkpoint.created_at ?? '')
+      }
+      : null;
+    const resetSnapshot = reset.checkpoint_artifact_id
+      ? {
+        reset_at: String(reset.reset_at ?? ''),
+        checkpoint_artifact_id: String(reset.checkpoint_artifact_id),
+        checkpoint_version: Number(reset.checkpoint_version ?? 0),
+        checkpoint_checksum: String(reset.checkpoint_checksum ?? '')
+      }
+      : null;
 
     server.store.logEvent({
       team_id: teamId,
@@ -236,7 +259,9 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
       },
       recovery_snapshot: {
         open_tasks: openTasks,
-        pending_inbox: pendingInbox
+        pending_inbox: pendingInbox,
+        checkpoint: checkpointSnapshot,
+        context_reset: resetSnapshot
       }
     };
   });

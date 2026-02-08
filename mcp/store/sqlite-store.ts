@@ -1150,6 +1150,138 @@ export class SqliteStore {
     };
   }
 
+  estimateContextFootprint(teamId: string): Record<string, number> {
+    const messages = this.db
+      .prepare(
+        `SELECT COUNT(*) as count, COALESCE(SUM(LENGTH(payload_json)), 0) as chars
+         FROM messages
+         WHERE team_id = ?`
+      )
+      .get(teamId) ?? {};
+    const events = this.db
+      .prepare(
+        `SELECT COUNT(*) as count, COALESCE(SUM(LENGTH(payload_json)), 0) as chars
+         FROM run_events
+         WHERE team_id = ?`
+      )
+      .get(teamId) ?? {};
+    const artifacts = this.db
+      .prepare(
+        `SELECT COUNT(*) as count, COALESCE(SUM(LENGTH(content)), 0) as chars
+         FROM artifacts
+         WHERE team_id = ?`
+      )
+      .get(teamId) ?? {};
+
+    const message_chars = Number(messages.chars ?? 0);
+    const event_chars = Number(events.chars ?? 0);
+    const artifact_chars = Number(artifacts.chars ?? 0);
+    return {
+      message_count: Number(messages.count ?? 0),
+      message_chars,
+      event_count: Number(events.count ?? 0),
+      event_chars,
+      artifact_count: Number(artifacts.count ?? 0),
+      artifact_chars,
+      total_chars: message_chars + event_chars + artifact_chars
+    };
+  }
+
+  pruneTeamContext({
+    team_id,
+    keep_recent_messages = 20,
+    keep_recent_events = 500
+  }: {
+    team_id: string;
+    keep_recent_messages?: number;
+    keep_recent_events?: number;
+  }): { deleted_messages: number; deleted_events: number } {
+    const safeKeepMessages = Math.max(0, Math.floor(Number(keep_recent_messages) || 0));
+    const safeKeepEvents = Math.max(0, Math.floor(Number(keep_recent_events) || 0));
+    let deletedMessages = 0;
+    let deletedEvents = 0;
+
+    this.runWithRetry(() => {
+      this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
+      try {
+        const keepMessageRows = safeKeepMessages > 0
+          ? this.db
+            .prepare(
+              `SELECT message_id
+               FROM messages
+               WHERE team_id = ?
+               ORDER BY created_at DESC, message_id DESC
+               LIMIT ?`
+            )
+            .all(team_id, safeKeepMessages)
+          : [];
+        const keepMessageIds = keepMessageRows.map((row) => String(row.message_id));
+
+        if (keepMessageIds.length > 0) {
+          const placeholders = keepMessageIds.map(() => '?').join(', ');
+          this.db
+            .prepare(
+              `DELETE FROM inbox
+               WHERE team_id = ?
+                 AND message_id NOT IN (${placeholders})`
+            )
+            .run(team_id, ...keepMessageIds);
+          const messageDelete = this.db
+            .prepare(
+              `DELETE FROM messages
+               WHERE team_id = ?
+                 AND message_id NOT IN (${placeholders})`
+            )
+            .run(team_id, ...keepMessageIds);
+          deletedMessages += Number(messageDelete.changes || 0);
+        } else {
+          this.db.prepare('DELETE FROM inbox WHERE team_id = ?').run(team_id);
+          const messageDelete = this.db.prepare('DELETE FROM messages WHERE team_id = ?').run(team_id);
+          deletedMessages += Number(messageDelete.changes || 0);
+        }
+
+        const keepEventRows = safeKeepEvents > 0
+          ? this.db
+            .prepare(
+              `SELECT id
+               FROM run_events
+               WHERE team_id = ?
+               ORDER BY id DESC
+               LIMIT ?`
+            )
+            .all(team_id, safeKeepEvents)
+          : [];
+        const keepEventIds = keepEventRows.map((row) => Number(row.id)).filter(Number.isFinite);
+
+        if (keepEventIds.length > 0) {
+          const placeholders = keepEventIds.map(() => '?').join(', ');
+          const eventDelete = this.db
+            .prepare(
+              `DELETE FROM run_events
+               WHERE team_id = ?
+                 AND id NOT IN (${placeholders})`
+            )
+            .run(team_id, ...keepEventIds);
+          deletedEvents += Number(eventDelete.changes || 0);
+        } else {
+          const eventDelete = this.db.prepare('DELETE FROM run_events WHERE team_id = ?').run(team_id);
+          deletedEvents += Number(eventDelete.changes || 0);
+        }
+
+        this.db.exec('COMMIT;');
+      } catch (error) {
+        this.db.exec('ROLLBACK;');
+        throw error;
+      }
+    });
+
+    this.touchTeam(team_id);
+    return {
+      deleted_messages: deletedMessages,
+      deleted_events: deletedEvents
+    };
+  }
+
   listTaskDependencyEdges(teamId: string): Array<Record<string, unknown>> {
     return this.db
       .prepare(

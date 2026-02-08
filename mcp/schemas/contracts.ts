@@ -105,7 +105,9 @@ export interface ToolInputContracts {
   'team_agent_heartbeat.schema.json': { team_id: string; agent_id: string; heartbeat_at?: string };
   'team_child_list.schema.json': { team_id: string; recursive?: boolean; include_metrics?: boolean };
   'team_child_start.schema.json': { team_id: string; objective: string; profile?: string; max_threads?: number; session_model?: string };
+  'team_checkpoint_compact.schema.json': { team_id: string; keep_recent_messages?: number; keep_recent_events?: number; checkpoint_name?: string };
   'team_broadcast.schema.json': { team_id: string; from_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
+  'team_context_reset.schema.json': { team_id: string; checkpoint_artifact_id?: string; checkpoint_version?: number };
   'team_delegate_task.schema.json': { team_id: string; child_team_id: string; title: string; description?: string; required_role?: string; priority: number };
   'team_finalize.schema.json': { team_id: string; reason?: string };
   'team_guardrail_check.schema.json': { team_id: string; consensus_reached: boolean; open_tasks: number };
@@ -169,7 +171,9 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_agent_heartbeat.schema.json': ['team_id', 'agent_id'],
   'team_child_list.schema.json': ['team_id'],
   'team_child_start.schema.json': ['team_id', 'objective'],
+  'team_checkpoint_compact.schema.json': ['team_id'],
   'team_broadcast.schema.json': ['team_id', 'from_agent_id', 'summary', 'idempotency_key'],
+  'team_context_reset.schema.json': ['team_id'],
   'team_delegate_task.schema.json': ['team_id', 'child_team_id', 'title', 'priority'],
   'team_finalize.schema.json': ['team_id'],
   'team_guardrail_check.schema.json': ['team_id', 'consensus_reached', 'open_tasks'],
