@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "required": ["team_id"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "task_size": { "type": "string", "enum": ["small", "medium", "high"] },
+    "budget_tokens_remaining": { "type": "integer", "minimum": 0 },
+    "estimated_parallel_tasks": { "type": "integer", "minimum": 1 },
+    "max_scale_up": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "max_scale_down": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "allow_busy_scale_down": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

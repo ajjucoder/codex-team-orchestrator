@@ -120,6 +120,7 @@ export interface ToolInputContracts {
   'team_policy_set_profile.schema.json': { team_id: string; profile: string };
   'team_pull_inbox.schema.json': { team_id: string; agent_id: string; limit?: number; ack_inbox_ids?: number[] };
   'team_replay.schema.json': { team_id: string; limit?: number };
+  'team_runtime_rebalance.schema.json': { team_id: string; task_size?: 'small' | 'medium' | 'high'; budget_tokens_remaining?: number; estimated_parallel_tasks?: number; max_scale_up?: number; max_scale_down?: number; allow_busy_scale_down?: boolean };
   'team_resume.schema.json': { team_id: string };
   'team_role_catalog.schema.json': { team_id: string };
   'team_run_summary.schema.json': { team_id: string };
@@ -183,6 +184,7 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_policy_set_profile.schema.json': ['team_id', 'profile'],
   'team_pull_inbox.schema.json': ['team_id', 'agent_id'],
   'team_replay.schema.json': ['team_id'],
+  'team_runtime_rebalance.schema.json': ['team_id'],
   'team_resume.schema.json': ['team_id'],
   'team_role_catalog.schema.json': ['team_id'],
   'team_run_summary.schema.json': ['team_id'],
