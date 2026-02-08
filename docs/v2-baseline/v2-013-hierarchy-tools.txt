@@ -1,0 +1,281 @@
+$ npm run typecheck
+
+> codex-team-orchestrator@1.0.0 typecheck
+> tsc -p tsconfig.json
+
+$ npm run test:unit
+
+> codex-team-orchestrator@1.0.0 test:unit
+> node --import tsx --test tests/unit/**/*.test.ts
+
+✔ AT-001 required structure exists (0.327875ms)
+✔ AT-001 package scripts exist (0.097417ms)
+✔ AT-002 entity schemas are discoverable (0.371875ms)
+✔ AT-002 team schema enforces max_threads <= 6 (14.836792ms)
+✔ AT-002 tool schema validation catches required fields (0.199125ms)
+✔ AT-002 message schema enforces direct messages include destination (0.216375ms)
+✔ AT-002 tool schema inventory exists (0.107541ms)
+✔ AT-002 TS contract required-field map matches entity schemas (0.706958ms)
+✔ AT-002 TS contract required-field map matches tool schemas (0.27925ms)
+(node:53190) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-003 migrations create schema and record version (7.114791ms)
+✔ AT-003 CRUD for team and agent works (5.025584ms)
+✔ AT-003 lock retry helper retries SQLITE_BUSY (2.518833ms)
+(node:53191) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-004 server start and health check (7.294708ms)
+✔ AT-004 tool call validates schema before handler execution (4.129334ms)
+(node:53192) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-005 team_start creates active team with model inheritance (23.685125ms)
+✔ AT-005 team_status and finalize transition lifecycle state (9.873667ms)
+(node:53193) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-006 spawn respects max_threads and model inheritance (25.336334ms)
+✔ AT-006 spawn supports optional policy model routing while keeping explicit model precedence (14.434667ms)
+✔ AT-006 team_send idempotency returns existing message (8.183292ms)
+✔ AT-006 team_send suppresses duplicate payloads even with different idempotency keys (7.25175ms)
+✔ AT-006 team_send sends artifact delta for same summary (156.972375ms)
+✔ AT-006 team_spawn_ready_roles spawns only hinted roles from ready DAG tasks (11.177709ms)
+(node:53194) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-007 create and list tasks (13.33ms)
+✔ AT-007 required_role must be a known role on create/update (8.690041ms)
+✔ AT-007 claim/update enforce optimistic lock version (17.097334ms)
+✔ AT-007 dependency DAG blocks downstream tasks until prerequisites are done (48.155083ms)
+✔ AT-007 dependency cycles are rejected (8.792083ms)
+✔ AT-007 speculative loser cancellation marks non-winning branches as cancelled (7.474542ms)
+(node:53195) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-008 publish increments versions and checksum tracks content (19.863167ms)
+✔ AT-008 read latest/version and list latest artifacts (11.911916ms)
+(node:53196) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-009 role pack includes required v1 roles (1.68775ms)
+✔ AT-009 team_role_catalog returns role definitions (12.182292ms)
+✔ AT-009 team_spawn rejects unknown roles (7.785167ms)
+(node:53371) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-010 consensus requires all approvals (0.499ms)
+✔ AT-010 lead strategy prioritizes lead vote (0.092834ms)
+✔ AT-010 strict_vote enforces >= 2/3 and >= 3 votes (0.083083ms)
+✔ AT-010 merge decision tool validates team agents (15.575458ms)
+(node:53372) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-011 simple YAML parser handles nested maps and scalar types (0.594375ms)
+✔ AT-011 policy engine loads swappable profiles (0.267208ms)
+✔ AT-011 policy tools expose and switch profile (22.236542ms)
+(node:53373) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-012 fanout ranges map to small/medium/high constraints (1.084458ms)
+✔ AT-012 fanout hard-caps at 6 regardless of inputs (0.094083ms)
+✔ AT-012 fanout allows lower-than-band recommendation under hard budget pressure (0.119959ms)
+✔ AT-012 fanout tool uses team profile policy (32.202ms)
+✔ AT-012 fanout tool derives token-cost estimate from telemetry when not provided (50.441917ms)
+✔ AT-012 fanout tool falls back to global telemetry when current team has sparse history (110.724375ms)
+(node:53374) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-013 compact payload keeps summary + artifact refs only (1.73575ms)
+✔ AT-013 early stop triggers on consensus + no open tasks (0.301292ms)
+✔ AT-013 idle evaluator identifies stale teams by profile thresholds (0.405792ms)
+✔ AT-013 guardrail tools enforce early stop and idle shutdown (61.074917ms)
+(node:53375) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-014 parse structured log file (1.633667ms)
+✔ AT-014 run summary tool returns aggregate metrics (10.866208ms)
+(node:53376) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-015 trigger detection is case-insensitive and exact phrase-based (0.485208ms)
+✔ AT-015 objective extraction removes trigger phrase (0.162083ms)
+✔ AT-015 infers task size from prompt complexity signals (0.156209ms)
+✔ AT-015 trigger tool starts team automatically (8.665958ms)
+✔ AT-015 trigger auto-spawns specialists by complexity with cap at six (7.88625ms)
+✔ AT-015 trigger uses telemetry budget estimator by default when token_cost_per_agent is omitted (10.81175ms)
+✔ AT-015 trigger prefers DAG-ready role spawn strategy when available (5.076292ms)
+✔ AT-016 script exists: scripts/install.sh (0.706ms)
+✔ AT-016 script exists: scripts/uninstall.sh (0.114208ms)
+✔ AT-016 script exists: scripts/check-config.sh (0.084792ms)
+(node:53378) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-017 benchmark shows lower median token usage for adaptive with no quality regression (625.312166ms)
+✔ AT-018 release metadata and docs exist (0.395958ms)
+(node:53380) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-019 logger redacts secret fields (2.818417ms)
+✔ AT-019 server enforces team-scoped access by auth context (6.384833ms)
+✔ AT-019 message tools reject cross-team agent usage (16.04025ms)
+✔ AT-019 payload limits reject oversized artifacts and messages (88.25075ms)
+✔ AT-019 team_resume restores active state with recovery snapshot (9.152625ms)
+(node:53381) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-001 baseline snapshot matches frozen fixture (106.874042ms)
+(node:53382) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-002 permission profile schema validates contract shape (0.648417ms)
+✔ V2-002 permission config validation rejects invalid v2 profiles (0.292042ms)
+✔ V2-002 permission config resolves deterministic profile bindings (0.14975ms)
+✔ V2-002 legacy permissions mapping remains backward-compatible (0.106834ms)
+✔ V2-002 tools reject invalid permission config on team start and policy swap (21.705834ms)
+(node:53383) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-003 evaluatePermissionDecision supports per-action overrides (1.914917ms)
+✔ V2-003 server enforces per-agent permission profile at runtime (15.120708ms)
+(node:53384) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-004 permission decision metadata is emitted in store events and logs (8.668083ms)
+(node:53385) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-005 migration sets existing teams to default mode (31.396167ms)
+✔ V2-005 store persists explicit mode changes (3.022125ms)
+✔ V2-006 mode policy matrix enforces default/delegate/plan semantics (0.828625ms)
+(node:53387) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-007 mode transitions enforce lead role and rollback invalid transitions (44.629541ms)
+✔ V2-008 hook engine enforces ordered pre-hook block semantics (14.317709ms)
+✔ V2-008 hook engine supports timeout behavior with fail-open override (3.443708ms)
+✔ V2-008 post hooks are traced without blocking tool completion (0.099167ms)
+(node:53389) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-009 builtin quality hook blocks task completion when configured quality gates fail (5.648834ms)
+(node:53390) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-010 store lease lifecycle supports contention, expiry recovery, renew, and release (10.552542ms)
+(node:53391) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-011 store orphan recovery is deterministic and idempotent (8.537375ms)
+(node:53392) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-012 migration backfills hierarchy defaults for legacy teams (16.3935ms)
+✔ V2-012 store persists validated parent-child hierarchy and query APIs (4.154ms)
+(node:53393) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-013 tools create/list child teams and enforce delegated task scope (10.07625ms)
+ℹ tests 91
+ℹ suites 0
+ℹ pass 91
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1544.660209
+$ npm run test:integration
+
+> codex-team-orchestrator@1.0.0 test:integration
+> node --import tsx --test tests/integration/**/*.test.ts
+
+✔ AT-001 lint script is runnable from integration path (376.862833ms)
+✔ AT-002 integration: representative contracts validate end-to-end (1.669875ms)
+(node:53408) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-003 integration: message idempotency and inbox delivery (7.551208ms)
+(node:53409) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-004 integration: server logs structured tool events (22.82675ms)
+(node:53410) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-005 integration: lifecycle tools emit structured events and persist state (9.140083ms)
+(node:53411) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-006 integration: broadcast + inbox pull/ack works through message bus (20.083583ms)
+✔ AT-006 integration: broadcast duplicate suppression and delta refs reduce bus traffic (49.421ms)
+✔ AT-006 integration: optional policy model routing applies per role while preserving defaults (5.584083ms)
+✔ AT-006 integration: spawn-ready-roles uses DAG-ready required_role hints only (9.563166ms)
+(node:53412) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-007 integration: conflicting claims result in single winner (13.130916ms)
+✔ AT-007 integration: DAG-ready queue returns unblocked tasks in priority order (9.844458ms)
+✔ AT-007 integration: loser-cancel policy emits cancellation and removes branches from ready queue (14.03675ms)
+✔ AT-007 integration: ready tasks preserve required_role hints for spawn shaping (8.629ms)
+(node:53413) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-008 integration: published artifact refs are exchanged via compact messages (21.103583ms)
+(node:53414) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-009 integration: role catalog and spawn interplay produces structured traces (11.19325ms)
+(node:53433) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-010 integration: arbitration decision persisted in structured events (19.634834ms)
+(node:53434) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-011 integration: profile swap changes behavior without code edits (18.107958ms)
+(node:53435) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-012 integration: adaptive fanout produces small/medium/high bands with hard cap (12.279334ms)
+✔ AT-012 integration: fanout uses telemetry estimator when token cost is omitted (18.898667ms)
+✔ AT-012 integration: fanout can use global telemetry when local team is cold (13.258584ms)
+(node:53436) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-013 integration: idle sweep finalizes stale teams and logs structured events (11.544667ms)
+(node:53437) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-014 integration: replay returns ordered events and summary reflects activity (22.029375ms)
+(node:53438) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-015 integration: trigger phrase creates orchestration team and logs invocation (13.277334ms)
+✔ AT-015 integration: complexity-based trigger auto-spawns workers within cap (16.718625ms)
+✔ AT-015 integration: trigger fanout planning defaults to telemetry estimator (20.344166ms)
+✔ AT-016 integration: install/check/uninstall scripts succeed in isolated CODEX_HOME (363.402625ms)
+(node:53519) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-017 integration: benchmark script emits pass gate and report artifact (693.505708ms)
+✔ AT-018 integration: release packaging script creates distributable archive (236.101875ms)
+(node:53458) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53549) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53576) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:53603) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ AT-019 integration: smoke scripts validate fanout bands and hard cap (502.802125ms)
+✔ AT-019 integration: cross-team messaging is denied while in-team messaging is allowed (9.268917ms)
+(node:53538) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-001 integration: baseline freeze script verifies fixture contract (337.797125ms)
+(node:53460) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-002 integration: v2 permission bindings apply deterministic profile names on spawn (14.972292ms)
+✔ V2-002 integration: policy swap rejects invalid permission profile config (4.37825ms)
+(node:53461) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-003 integration: allow/deny matrix enforces per-action runtime permissions (24.082667ms)
+(node:53472) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-004 integration: replay contains deterministic permission audit trail (17.48425ms)
+(node:53527) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-005 integration: team mode defaults and is visible via team_status (11.67875ms)
+(node:53551) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-006 integration: plan/delegate/default mode gates are enforced (21.056834ms)
+(node:53554) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-007 integration: ttl mode transitions auto-reset safely (56.019417ms)
+(node:53555) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-008 integration: lifecycle hook points execute for spawn/claim/complete/finalize/resume (12.025125ms)
+✔ V2-008 integration: blocking pre-hook rejects unsafe operation with trace (3.951875ms)
+(node:53587) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-009 integration: quality hooks block completion until configured gates pass (25.513333ms)
+(node:53588) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-010 integration: lease tools enforce contention and stale-lease recovery (30.578375ms)
+(node:53589) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-011 integration: crash-restart recovery requeues orphaned work deterministically (25.692459ms)
+(node:53590) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-012 integration: team_start supports parent-child hierarchy and status visibility (15.823333ms)
+(node:53591) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ V2-013 integration: hierarchical delegation supports rollups and isolation (11.194ms)
+ℹ tests 45
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1244.452708

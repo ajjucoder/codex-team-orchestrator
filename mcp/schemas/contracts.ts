@@ -103,9 +103,13 @@ export interface ToolInputContracts {
   'team_artifact_publish.schema.json': { team_id: string; name: string; content: string; artifact_id?: string; published_by?: string; metadata?: Record<string, unknown> };
   'team_artifact_read.schema.json': { team_id: string; artifact_id: string; version?: number };
   'team_agent_heartbeat.schema.json': { team_id: string; agent_id: string; heartbeat_at?: string };
+  'team_child_list.schema.json': { team_id: string; recursive?: boolean; include_metrics?: boolean };
+  'team_child_start.schema.json': { team_id: string; objective: string; profile?: string; max_threads?: number; session_model?: string };
   'team_broadcast.schema.json': { team_id: string; from_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
+  'team_delegate_task.schema.json': { team_id: string; child_team_id: string; title: string; description?: string; required_role?: string; priority: number };
   'team_finalize.schema.json': { team_id: string; reason?: string };
   'team_guardrail_check.schema.json': { team_id: string; consensus_reached: boolean; open_tasks: number };
+  'team_hierarchy_rollup.schema.json': { team_id: string; include_parent?: boolean };
   'team_idle_sweep.schema.json': { now_iso?: string };
   'team_merge_decide.schema.json': { team_id: string; proposal_id: string; strategy: 'consensus' | 'lead' | 'strict_vote'; votes: Array<{ agent_id: string; decision: 'approve' | 'reject' }>; lead_agent_id?: string };
   'team_mode_get.schema.json': { team_id: string };
@@ -162,9 +166,13 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_artifact_publish.schema.json': ['team_id', 'name', 'content'],
   'team_artifact_read.schema.json': ['team_id', 'artifact_id'],
   'team_agent_heartbeat.schema.json': ['team_id', 'agent_id'],
+  'team_child_list.schema.json': ['team_id'],
+  'team_child_start.schema.json': ['team_id', 'objective'],
   'team_broadcast.schema.json': ['team_id', 'from_agent_id', 'summary', 'idempotency_key'],
+  'team_delegate_task.schema.json': ['team_id', 'child_team_id', 'title', 'priority'],
   'team_finalize.schema.json': ['team_id'],
   'team_guardrail_check.schema.json': ['team_id', 'consensus_reached', 'open_tasks'],
+  'team_hierarchy_rollup.schema.json': ['team_id'],
   'team_idle_sweep.schema.json': [],
   'team_merge_decide.schema.json': ['team_id', 'proposal_id', 'strategy', 'votes'],
   'team_mode_get.schema.json': ['team_id'],

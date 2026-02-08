@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["team_id", "objective"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "objective": { "type": "string" },
+    "profile": { "type": "string" },
+    "max_threads": { "type": "integer", "minimum": 1, "maximum": 6 },
+    "session_model": { "type": "string" }
+  },
+  "additionalProperties": false
+}

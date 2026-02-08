@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "required": ["team_id", "child_team_id", "title", "priority"],
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "child_team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "required_role": { "type": "string" },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 9 }
+  },
+  "additionalProperties": false
+}
