@@ -4,21 +4,33 @@ import { MCPServer } from './server.js';
 import { PolicyEngine } from './policy-engine.js';
 import { HookEngine } from './hooks.js';
 import { registerBuiltInPolicyHooks } from './policy-hooks.js';
+import { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { ToolServerLike } from './tools/types.js';
 
-interface CreateServerOptions {
+interface StoreFactoryOptions {
+  busyTimeoutMs?: number;
+  lockRetries?: number;
+  lockBackoffMs?: number;
+}
+
+export interface CreateServerOptions {
   dbPath?: string;
   logPath?: string;
   profileDir?: string;
-  storeOptions?: {
-    busyTimeoutMs?: number;
-    lockRetries?: number;
-    lockBackoffMs?: number;
-  };
+  storeOptions?: StoreFactoryOptions;
   store?: SqliteStore;
   logger?: StructuredLogger;
   policyEngine?: PolicyEngine;
   hookEngine?: HookEngine;
+}
+
+export interface CreateSchedulerOptions {
+  dbPath?: string;
+  storeOptions?: StoreFactoryOptions;
+  store?: SqliteStore;
+  server?: MCPServer;
+  tickIntervalMs?: number;
+  readyTaskLimit?: number;
 }
 
 export function createServer(options: CreateServerOptions = {}): MCPServer {
@@ -31,4 +43,16 @@ export function createServer(options: CreateServerOptions = {}): MCPServer {
   server.hookEngine = hookEngine;
   registerBuiltInPolicyHooks(server as unknown as ToolServerLike);
   return server;
+}
+
+export function createScheduler(options: CreateSchedulerOptions = {}): RuntimeScheduler {
+  const store = options.server?.store
+    ?? options.store
+    ?? new SqliteStore(options.dbPath ?? '.tmp/team-orchestrator.sqlite', options.storeOptions);
+
+  return new RuntimeScheduler({
+    store,
+    tickIntervalMs: options.tickIntervalMs,
+    readyTaskLimit: options.readyTaskLimit
+  });
 }
