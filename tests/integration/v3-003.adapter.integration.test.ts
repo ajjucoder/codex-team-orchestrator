@@ -32,8 +32,10 @@ afterEach(() => {
 function makeAdapter(options: {
   failSpawnForRole?: string;
   failPoll?: boolean;
+  failSendOnce?: boolean;
 } = {}): { adapter: WorkerAdapter; calls: string[] } {
   const calls: string[] = [];
+  let sendAttempts = 0;
   const provider: WorkerProvider = {
     name: 'mock-int',
     spawn: (input: WorkerSpawnInput): WorkerSpawnResult => {
@@ -54,6 +56,14 @@ function makeAdapter(options: {
     },
     sendInstruction: (input: WorkerSendInstructionInput): WorkerSendInstructionResult => {
       calls.push(`send:${input.worker_id}`);
+      sendAttempts += 1;
+      if (options.failSendOnce && sendAttempts === 1) {
+        throw {
+          code: 'SEND_TIMEOUT',
+          message: 'send failed once',
+          retryable: true
+        };
+      }
       return {
         accepted: true,
         instruction_id: 'instruction_int_1',
@@ -98,6 +108,75 @@ function makeAdapter(options: {
     calls
   };
 }
+
+test('V3-003 integration: dispatch failure rolls back message insert and allows idempotent retry', () => {
+  const { adapter, calls } = makeAdapter({ failSendOnce: true });
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server, { workerAdapter: adapter });
+
+  const started = server.callTool('team_start', {
+    objective: 'dispatch rollback path',
+    max_threads: 3,
+    profile: 'default'
+  });
+  assert.equal(started.ok, true);
+  const teamId = started.team.team_id;
+
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+
+  const failed = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: lead.agent.agent_id,
+    to_agent_id: worker.agent.agent_id,
+    summary: 'ship patch rollback path',
+    artifact_refs: [],
+    idempotency_key: 'v3-003-rollback-idem'
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.rollback.ok, true);
+  assert.equal(failed.rollback.rolled_back, true);
+  assert.equal(failed.rollback.deleted_messages, 1);
+
+  const emptyInbox = server.callTool('team_pull_inbox', {
+    team_id: teamId,
+    agent_id: worker.agent.agent_id,
+    ack: false
+  });
+  assert.equal(emptyInbox.ok, true);
+  assert.equal(emptyInbox.messages.length, 0);
+
+  const retried = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: lead.agent.agent_id,
+    to_agent_id: worker.agent.agent_id,
+    summary: 'ship patch rollback path',
+    artifact_refs: [],
+    idempotency_key: 'v3-003-rollback-idem'
+  });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.inserted, true);
+
+  const inbox = server.callTool('team_pull_inbox', {
+    team_id: teamId,
+    agent_id: worker.agent.agent_id,
+    ack: false
+  });
+  assert.equal(inbox.ok, true);
+  assert.equal(inbox.messages.length, 1);
+  assert.equal(inbox.messages[0].message_id, retried.message.message_id);
+  assert.equal(calls.filter((entry) => entry.startsWith('send:')).length, 2);
+
+  const events = server.store.listEvents(teamId, 200);
+  assert.equal(events.some((event) => event.event_type === 'worker_instruction_dispatch_rollback'), true);
+  assert.equal(events.some((event) => event.event_type === 'worker_instruction_dispatched'), true);
+
+  server.store.close();
+});
 
 test('V3-003 integration: lifecycle tools expose adapter success envelopes through spawn/send/pull path', () => {
   const { adapter, calls } = makeAdapter();

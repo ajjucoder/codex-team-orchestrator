@@ -18,6 +18,47 @@ function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
+type WorkerStatusClassification = 'terminal_success' | 'terminal_failure' | 'non_terminal';
+
+const TERMINAL_SUCCESS_STATUSES = new Set([
+  'completed',
+  'succeeded',
+  'done',
+  'finished',
+  'success'
+]);
+
+const TERMINAL_FAILURE_STATUSES = new Set([
+  'failed',
+  'error',
+  'cancelled',
+  'interrupted',
+  'rejected',
+  'timed_out',
+  'timeout'
+]);
+
+function classifyWorkerStatus(status: unknown): WorkerStatusClassification {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  if (TERMINAL_SUCCESS_STATUSES.has(normalized)) return 'terminal_success';
+  if (TERMINAL_FAILURE_STATUSES.has(normalized)) return 'terminal_failure';
+  return 'non_terminal';
+}
+
+function hasWorkerEvidenceSignals(
+  workerPoll: Record<string, unknown> | null,
+  workerArtifacts: Record<string, unknown>[]
+): boolean {
+  const pollEvents = Array.isArray(workerPoll?.events) ? workerPoll.events : [];
+  const hasEvents = pollEvents.length > 0;
+  const pollOutput = workerPoll?.output;
+  const hasOutput = isRecord(pollOutput)
+    ? Object.keys(pollOutput).length > 0
+    : Boolean(pollOutput);
+  const hasArtifacts = workerArtifacts.length > 0;
+  return hasEvents || hasOutput || hasArtifacts;
+}
+
 function readErrorText(result: ToolResult | null | undefined, fallback: string): string {
   if (!result) return fallback;
   if (typeof result.error === 'string' && result.error.trim().length > 0) return result.error;
@@ -306,23 +347,84 @@ export class RuntimeExecutor {
     const workerErrors = Array.isArray(inbox.worker_errors)
       ? inbox.worker_errors
       : [];
+    const workerPoll = isRecord(inbox.worker_poll)
+      ? inbox.worker_poll
+      : null;
     const workerArtifacts = Array.isArray(inbox.worker_artifacts)
       ? inbox.worker_artifacts.filter(isRecord)
       : [];
 
-    const qualityChecksPassed = workerErrors.length === 0;
-    const complianceAck = workerErrors.length === 0;
+    let validationOutcome: 'passed' | 'blocked' | 'skipped' = 'passed';
+    let validationDetail = 'worker output validated';
+    let qualityChecksPassed = true;
+    let complianceAck = true;
+
+    if (workerErrors.length > 0) {
+      validationOutcome = 'blocked';
+      validationDetail = `worker reported ${workerErrors.length} error(s)`;
+      qualityChecksPassed = false;
+      complianceAck = false;
+    } else if (!workerPoll) {
+      validationOutcome = 'skipped';
+      validationDetail = 'worker poll unavailable; validation deferred';
+      qualityChecksPassed = false;
+      complianceAck = false;
+    } else {
+      const statusClass = classifyWorkerStatus(workerPoll.status);
+      if (statusClass === 'non_terminal') {
+        validationOutcome = 'skipped';
+        validationDetail = `worker status non-terminal: ${String(workerPoll.status ?? 'unknown')}`;
+        qualityChecksPassed = false;
+        complianceAck = false;
+      } else if (statusClass === 'terminal_failure') {
+        validationOutcome = 'blocked';
+        validationDetail = `worker terminal failure status: ${String(workerPoll.status ?? 'failed')}`;
+        qualityChecksPassed = false;
+        complianceAck = false;
+      } else if (!hasWorkerEvidenceSignals(workerPoll, workerArtifacts)) {
+        validationOutcome = 'blocked';
+        validationDetail = 'worker terminal success missing evidence signals';
+        qualityChecksPassed = false;
+        complianceAck = false;
+      }
+    }
 
     events.push(this.stageEvent({
       team_id: teamId,
       task_id: taskRecord.task_id,
       agent_id: workerId,
       stage: 'validate',
-      status: qualityChecksPassed ? 'succeeded' : 'failed',
-      detail: qualityChecksPassed
-        ? 'worker output validated'
-        : `worker reported ${workerErrors.length} error(s)`
+      status: validationOutcome === 'passed'
+        ? 'succeeded'
+        : (validationOutcome === 'blocked' ? 'failed' : 'skipped'),
+      detail: validationDetail
     }));
+
+    if (validationOutcome === 'skipped') {
+      return {
+        ok: true,
+        team_id: teamId,
+        task_id: taskRecord.task_id,
+        agent_id: workerId,
+        final_status: 'skipped',
+        evidence_ref: null,
+        events
+      };
+    }
+
+    if (validationOutcome === 'blocked') {
+      return this.blockTask({
+        teamId,
+        task: taskRecord,
+        workerId,
+        events,
+        reason: `executor validation failed: ${validationDetail}`,
+        evidenceRef: null,
+        qualityChecksPassed: false,
+        complianceAck: false,
+        artifactRefsCount: 0
+      });
+    }
 
     const artifactPayload = {
       task_id: taskRecord.task_id,
@@ -391,7 +493,7 @@ export class RuntimeExecutor {
       detail: `published ${artifactId}@${evidenceRef.version}`
     }));
 
-    const finalStatus = qualityChecksPassed ? 'done' : 'blocked';
+    const finalStatus = 'done';
     const latestTask = this.server.store.getTask(taskRecord.task_id);
     if (!latestTask) {
       events.push(this.stageEvent({

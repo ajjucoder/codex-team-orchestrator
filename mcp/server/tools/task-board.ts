@@ -354,14 +354,13 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
     }
 
     server.store.refreshAllTaskReadiness(teamId);
-    const readyTasksRaw = server
-      .store
-      .listReadyTasks(teamId, readOptionalNumber(input, 'limit') ?? 20)
+    const limit = readOptionalNumber(input, 'limit') ?? 20;
+    const readyTasksSource = requiredRole
+      ? server.store.listReadyTasksByRole(teamId, requiredRole, limit)
+      : server.store.listReadyTasks(teamId, limit);
+    const readyTasks = readyTasksSource
       .map((task) => hydrateTask(server, task))
       .filter((task): task is HydratedTask => task !== null);
-    const readyTasks = requiredRole
-      ? readyTasksRaw.filter((task) => task.required_role === null || task.required_role === requiredRole)
-      : readyTasksRaw;
 
     return {
       ok: true,

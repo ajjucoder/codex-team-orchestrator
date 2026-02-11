@@ -316,3 +316,46 @@ test('AT-007 speculative loser cancellation marks non-winning branches as cancel
 
   server.store.close();
 });
+
+test('AT-007 team_task_next applies role filter before limit for for_agent_id queries', () => {
+  const { server, teamId, workerId } = setup();
+  const reviewer = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+  assert.equal(reviewer.ok, true);
+
+  const reviewerA = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review-a',
+    priority: 1,
+    required_role: 'reviewer'
+  }).task;
+  const reviewerB = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review-b',
+    priority: 2,
+    required_role: 'reviewer'
+  }).task;
+  const implementerTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'implementer-task',
+    priority: 3,
+    required_role: 'implementer'
+  }).task;
+
+  const globalNext = server.callTool('team_task_next', { team_id: teamId, limit: 2 });
+  assert.equal(globalNext.ok, true);
+  assert.equal(globalNext.tasks.length, 2);
+  assert.equal(globalNext.tasks[0].task_id, reviewerA.task_id);
+  assert.equal(globalNext.tasks[1].task_id, reviewerB.task_id);
+
+  const implementerNext = server.callTool('team_task_next', {
+    team_id: teamId,
+    for_agent_id: workerId,
+    limit: 2
+  });
+  assert.equal(implementerNext.ok, true);
+  assert.equal(implementerNext.role_filter, 'implementer');
+  assert.equal(implementerNext.tasks.length, 1);
+  assert.equal(implementerNext.tasks[0].task_id, implementerTask.task_id);
+
+  server.store.close();
+});

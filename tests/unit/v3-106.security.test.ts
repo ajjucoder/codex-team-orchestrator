@@ -46,3 +46,80 @@ test('V3-106 unit: secret scan and redaction sanitize sensitive payloads', () =>
   assert.equal(redacted.token, '[REDACTED]');
   assert.equal((redacted.nested as Record<string, unknown>).message, '[REDACTED_SECRET]');
 });
+
+test('V3-106 unit: allow-prefix matching requires command boundary and blocks chained commands', () => {
+  const policy = {
+    command_policy: {
+      default_allow: false,
+      allow_prefixes: {
+        default: 'git status'
+      }
+    }
+  };
+
+  const exactMatch = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'git status'
+  });
+  assert.equal(exactMatch.allowed, true);
+  assert.equal(exactMatch.matched_rule, 'allow_prefix:git status');
+
+  const boundaryMatch = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'git status --short'
+  });
+  assert.equal(boundaryMatch.allowed, true);
+  assert.equal(boundaryMatch.matched_rule, 'allow_prefix:git status');
+
+  const boundaryMiss = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'git statusx --short'
+  });
+  assert.equal(boundaryMiss.allowed, false);
+  assert.equal(boundaryMiss.matched_rule, 'allow_prefix_miss');
+
+  const chainedCommand = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'git status && echo ok'
+  });
+  assert.equal(chainedCommand.allowed, false);
+  assert.equal(chainedCommand.matched_rule, 'allow_prefix_chained_command_block');
+});
+
+test('V3-106 unit: deny-pattern precedence and default fallback remain intact', () => {
+  const policy = {
+    command_policy: {
+      default_allow: true,
+      deny_patterns: 'git\\s+status\\s+--short',
+      allow_prefixes: {
+        default: 'git status'
+      }
+    }
+  };
+
+  const denyPrecedence = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'git status --short'
+  });
+  assert.equal(denyPrecedence.allowed, false);
+  assert.match(String(denyPrecedence.matched_rule), /deny_pattern/);
+
+  const defaultFallback = evaluateCommandPolicy({
+    policy,
+    role: 'implementer',
+    mode: 'default',
+    command: 'echo hello world'
+  });
+  assert.equal(defaultFallback.allowed, true);
+  assert.equal(defaultFallback.matched_rule, 'default_allow');
+});

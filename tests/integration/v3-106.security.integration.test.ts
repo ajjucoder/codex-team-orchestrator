@@ -44,6 +44,18 @@ test('V3-106 integration: secret leakage and command policy are enforced with se
   assert.equal(commandCheck.ok, true);
   assert.equal(commandCheck.command_policy.allowed, false);
 
+  const chainedBypassCheck = server.callTool('team_guardrail_check', {
+    team_id: teamId,
+    consensus_reached: false,
+    open_tasks: 2,
+    actor_role: 'implementer',
+    mode: 'default',
+    proposed_command: 'git status && echo bypass'
+  });
+  assert.equal(chainedBypassCheck.ok, true);
+  assert.equal(chainedBypassCheck.command_policy.allowed, false);
+  assert.equal(chainedBypassCheck.command_policy.matched_rule, 'allow_prefix_chained_command_block');
+
   const secretMessage = server.callTool('team_send', {
     team_id: teamId,
     from_agent_id: lead,

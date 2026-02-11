@@ -54,6 +54,14 @@ interface AppendMessageResult {
   message: MessageRecord;
 }
 
+interface MessageRollbackResult {
+  ok: boolean;
+  rolled_back: boolean;
+  deleted_inbox: number;
+  deleted_messages: number;
+  error?: string;
+}
+
 interface TaskMutationResult {
   ok: boolean;
   error?: string;
@@ -762,6 +770,64 @@ export class SqliteStore {
     });
     this.touchTeam(message.team_id);
     return result as AppendMessageResult;
+  }
+
+  rollbackMessageInsert(teamId: string, messageId: string): MessageRollbackResult {
+    try {
+      const rollback = this.runWithRetry(() => {
+        this.db.exec('BEGIN IMMEDIATE TRANSACTION;');
+        try {
+          const existing = this.db
+            .prepare('SELECT message_id FROM messages WHERE team_id = ? AND message_id = ?')
+            .get(teamId, messageId);
+          if (!existing) {
+            this.db.exec('COMMIT;');
+            return {
+              ok: true,
+              rolled_back: false,
+              deleted_inbox: 0,
+              deleted_messages: 0
+            } satisfies MessageRollbackResult;
+          }
+
+          const deletedInbox = Number(
+            this.db
+              .prepare('DELETE FROM inbox WHERE team_id = ? AND message_id = ?')
+              .run(teamId, messageId)
+              .changes ?? 0
+          );
+          const deletedMessages = Number(
+            this.db
+              .prepare('DELETE FROM messages WHERE team_id = ? AND message_id = ?')
+              .run(teamId, messageId)
+              .changes ?? 0
+          );
+          this.db.exec('COMMIT;');
+          return {
+            ok: true,
+            rolled_back: deletedMessages > 0,
+            deleted_inbox: deletedInbox,
+            deleted_messages: deletedMessages
+          } satisfies MessageRollbackResult;
+        } catch (error) {
+          this.db.exec('ROLLBACK;');
+          throw error;
+        }
+      });
+
+      if (rollback.rolled_back) {
+        this.touchTeam(teamId);
+      }
+      return rollback;
+    } catch (error) {
+      return {
+        ok: false,
+        rolled_back: false,
+        deleted_inbox: 0,
+        deleted_messages: 0,
+        error: String((error as { message?: unknown })?.message ?? error ?? 'rollback failed')
+      };
+    }
   }
 
   getLatestRouteMessage({
@@ -2255,6 +2321,30 @@ export class SqliteStore {
          LIMIT ?`
       )
       .all(teamId, limit);
+    return rows as unknown as TaskRecord[];
+  }
+
+  listReadyTasksByRole(teamId: string, requiredRole: string, limit = 20): TaskRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.*
+         FROM tasks t
+         LEFT JOIN task_dependencies td
+           ON td.team_id = t.team_id
+          AND td.task_id = t.task_id
+         LEFT JOIN tasks dep
+           ON dep.team_id = td.team_id
+          AND dep.task_id = td.depends_on_task_id
+          AND dep.status != 'done'
+         WHERE t.team_id = ?
+           AND t.status = 'todo'
+           AND (t.required_role IS NULL OR t.required_role = ?)
+         GROUP BY t.task_id
+         HAVING COUNT(dep.task_id) = 0
+         ORDER BY t.priority ASC, t.created_at ASC
+         LIMIT ?`
+      )
+      .all(teamId, requiredRole, limit);
     return rows as unknown as TaskRecord[];
   }
 

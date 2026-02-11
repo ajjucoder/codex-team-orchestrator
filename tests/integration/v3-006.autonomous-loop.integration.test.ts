@@ -7,6 +7,7 @@ import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecy
 import { registerArtifactTools } from '../../mcp/server/tools/artifacts.js';
 import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
+import { WorkerAdapter, type WorkerProvider } from '../../mcp/runtime/worker-adapter.js';
 
 const cleanupTargets: Array<{ dbPath: string; logPath: string }> = [];
 
@@ -19,6 +20,36 @@ afterEach(() => {
   }
 });
 
+function makeWorkerAdapter(): WorkerAdapter {
+  const provider: WorkerProvider = {
+    name: 'mock-v3-006-integration',
+    spawn: (input) => ({
+      worker_id: `worker_${input.agent_id}`,
+      status: 'spawned'
+    }),
+    sendInstruction: (input) => ({
+      accepted: true,
+      instruction_id: `instruction_${input.worker_id}`,
+      status: 'queued'
+    }),
+    poll: (input) => ({
+      worker_id: input.worker_id,
+      status: 'completed',
+      events: [{ type: 'done' }],
+      output: { summary: 'ok' }
+    }),
+    interrupt: () => ({
+      interrupted: true,
+      status: 'interrupted'
+    }),
+    collectArtifacts: (input) => ({
+      worker_id: input.worker_id,
+      artifacts: [{ artifact_id: `artifact_${input.worker_id}`, version: 1 }]
+    })
+  };
+  return new WorkerAdapter(provider);
+}
+
 function bootstrapServer(suffix: string) {
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
   const dbPath = `.tmp/v3-006-int-${suffix}-${nonce}.sqlite`;
@@ -27,7 +58,7 @@ function bootstrapServer(suffix: string) {
   const server = createServer({ dbPath, logPath });
   server.start();
   registerTeamLifecycleTools(server);
-  registerAgentLifecycleTools(server);
+  registerAgentLifecycleTools(server, { workerAdapter: makeWorkerAdapter() });
   registerArtifactTools(server);
   registerTaskBoardTools(server);
   return server;

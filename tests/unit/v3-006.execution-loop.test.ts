@@ -34,7 +34,13 @@ afterEach(() => {
   rmSync(logPath, { force: true });
 });
 
-function makeWorkerAdapter(options: { failPoll?: boolean } = {}): WorkerAdapter {
+function makeWorkerAdapter(options: {
+  failPoll?: boolean;
+  pollStatus?: string;
+  pollEvents?: Array<Record<string, unknown>>;
+  pollOutput?: Record<string, unknown> | null;
+  artifactCount?: number;
+} = {}): WorkerAdapter {
   const provider: WorkerProvider = {
     name: 'mock-v3-006',
     spawn: (input: WorkerSpawnInput): WorkerSpawnResult => ({
@@ -54,11 +60,15 @@ function makeWorkerAdapter(options: { failPoll?: boolean } = {}): WorkerAdapter 
           retryable: false
         };
       }
+      const events = options.pollEvents ?? [{ type: 'done' }];
+      const output = options.pollOutput === undefined
+        ? { summary: 'ok' }
+        : (options.pollOutput ?? undefined);
       return {
         worker_id: input.worker_id,
-        status: 'completed',
-        events: [{ type: 'done' }],
-        output: { summary: 'ok' }
+        status: options.pollStatus ?? 'completed',
+        events,
+        output
       };
     },
     interrupt: (input: WorkerInterruptInput): WorkerInterruptResult => ({
@@ -68,10 +78,10 @@ function makeWorkerAdapter(options: { failPoll?: boolean } = {}): WorkerAdapter 
     collectArtifacts: (input: WorkerCollectArtifactsInput): WorkerCollectArtifactsResult => ({
       worker_id: input.worker_id,
       artifacts: [
-        {
-          artifact_id: `worker_artifact_${input.worker_id}`,
-          version: 1
-        }
+        ...Array.from({ length: options.artifactCount ?? 1 }).map((_, index) => ({
+          artifact_id: `worker_artifact_${input.worker_id}_${index + 1}`,
+          version: index + 1
+        }))
       ]
     })
   };
@@ -290,7 +300,6 @@ test('V3-006 unit: validation errors auto-transition task to blocked with eviden
       'assign_worker:succeeded',
       'execute:succeeded',
       'validate:failed',
-      'publish_artifact:succeeded',
       'update_status:succeeded'
     ]
   );
@@ -298,15 +307,10 @@ test('V3-006 unit: validation errors auto-transition task to blocked with eviden
   const task = server.store.getTask(taskId);
   assert.equal(task?.status, 'blocked');
   assert.equal(server.store.getAgent(workerId)?.status, 'idle');
-  assert.match(String(task?.description ?? ''), /executor evidence: artifact_task_/);
+  assert.match(String(task?.description ?? ''), /\[blocked\] executor validation failed/);
 
   const evidenceArtifact = server.store.getArtifact(teamId, `artifact_task_${taskId}`);
-  assert.equal(Boolean(evidenceArtifact), true);
-  const evidencePayload = JSON.parse(String(evidenceArtifact?.content ?? '{}')) as Record<string, unknown>;
-  const validation = evidencePayload.validation as Record<string, unknown>;
-  assert.equal(validation.quality_checks_passed, false);
-  assert.equal(validation.compliance_ack, false);
-  assert.equal(validation.worker_error_count, 1);
+  assert.equal(Boolean(evidenceArtifact), false);
 
   const events = server.store.listEvents(teamId, 200);
   const workerSnapshot = events.find((event) => event.event_type === 'worker_execution_snapshot');
@@ -317,8 +321,225 @@ test('V3-006 unit: validation errors auto-transition task to blocked with eviden
   assert.equal(Boolean(terminalEvidence), true);
   const evidence = eventPayload(terminalEvidence).evidence as Record<string, unknown>;
   assert.equal(evidence.quality_checks_passed, false);
-  assert.equal(evidence.artifact_refs_count, 1);
+  assert.equal(evidence.artifact_refs_count, 0);
   assert.equal(evidence.compliance_ack, false);
+
+  server.store.close();
+});
+
+test('V3-006 unit: non-terminal worker status keeps task in_progress and defers completion', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerArtifactTools(server);
+  registerAgentLifecycleTools(server, {
+    workerAdapter: makeWorkerAdapter({
+      pollStatus: 'running',
+      pollEvents: [{ type: 'heartbeat' }],
+      pollOutput: { summary: 'running' },
+      artifactCount: 0
+    })
+  });
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'v3-006 running status',
+    profile: 'default',
+    max_threads: 3
+  });
+  const teamId = String(started.team.team_id);
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+  const workerId = String(worker.agent.agent_id);
+
+  const created = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'still running',
+    required_role: 'implementer',
+    priority: 1
+  });
+  const taskId = String(created.task.task_id);
+
+  const claimed = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    expected_lock_version: Number(created.task.lock_version)
+  });
+  assert.equal(claimed.ok, true);
+
+  const scheduler = makeStaticScheduler([{
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    required_role: 'implementer',
+    priority: 1,
+    git_branch: 'team/run-test/implementer-1',
+    git_worktree_path: '/tmp/run-test/implementer-1'
+  }]);
+  const executor = new RuntimeExecutor({ server, scheduler });
+
+  const run = executor.runOnce(teamId);
+  assert.equal(run.ok, true);
+  assert.equal(run.tasks_completed, 0);
+  assert.equal(run.tasks_blocked, 0);
+  assert.equal(run.tasks_skipped, 1);
+
+  const result = run.task_results[0];
+  assert.equal(result.final_status, 'skipped');
+  assert.deepEqual(
+    result.events.map((event) => `${event.stage}:${event.status}`),
+    [
+      'pick_task:succeeded',
+      'assign_worker:succeeded',
+      'execute:succeeded',
+      'validate:skipped'
+    ]
+  );
+
+  const task = server.store.getTask(taskId);
+  assert.equal(task?.status, 'in_progress');
+  assert.equal(Boolean(server.store.getArtifact(teamId, `artifact_task_${taskId}`)), false);
+
+  server.store.close();
+});
+
+test('V3-006 unit: terminal failure worker status transitions task to blocked', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerArtifactTools(server);
+  registerAgentLifecycleTools(server, {
+    workerAdapter: makeWorkerAdapter({
+      pollStatus: 'failed',
+      pollEvents: [],
+      pollOutput: null,
+      artifactCount: 0
+    })
+  });
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'v3-006 terminal failure',
+    profile: 'default',
+    max_threads: 3
+  });
+  const teamId = String(started.team.team_id);
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+  const workerId = String(worker.agent.agent_id);
+
+  const created = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'terminal failure',
+    required_role: 'implementer',
+    priority: 1
+  });
+  const taskId = String(created.task.task_id);
+
+  const claimed = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    expected_lock_version: Number(created.task.lock_version)
+  });
+  assert.equal(claimed.ok, true);
+
+  const scheduler = makeStaticScheduler([{
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    required_role: 'implementer',
+    priority: 1,
+    git_branch: 'team/run-test/implementer-1',
+    git_worktree_path: '/tmp/run-test/implementer-1'
+  }]);
+  const executor = new RuntimeExecutor({ server, scheduler });
+
+  const run = executor.runOnce(teamId);
+  assert.equal(run.ok, true);
+  assert.equal(run.tasks_completed, 0);
+  assert.equal(run.tasks_blocked, 1);
+  assert.equal(run.tasks_skipped, 0);
+  assert.equal(run.task_results[0]?.final_status, 'blocked');
+
+  const task = server.store.getTask(taskId);
+  assert.equal(task?.status, 'blocked');
+  assert.match(String(task?.description ?? ''), /terminal failure status/);
+  assert.equal(Boolean(server.store.getArtifact(teamId, `artifact_task_${taskId}`)), false);
+
+  server.store.close();
+});
+
+test('V3-006 unit: terminal success requires evidence signal before marking task done', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerArtifactTools(server);
+  registerAgentLifecycleTools(server, {
+    workerAdapter: makeWorkerAdapter({
+      pollStatus: 'completed',
+      pollEvents: [],
+      pollOutput: null,
+      artifactCount: 0
+    })
+  });
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'v3-006 missing evidence',
+    profile: 'default',
+    max_threads: 3
+  });
+  const teamId = String(started.team.team_id);
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+  const workerId = String(worker.agent.agent_id);
+
+  const created = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'missing evidence',
+    required_role: 'implementer',
+    priority: 1
+  });
+  const taskId = String(created.task.task_id);
+
+  const claimed = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    expected_lock_version: Number(created.task.lock_version)
+  });
+  assert.equal(claimed.ok, true);
+
+  const scheduler = makeStaticScheduler([{
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    required_role: 'implementer',
+    priority: 1,
+    git_branch: 'team/run-test/implementer-1',
+    git_worktree_path: '/tmp/run-test/implementer-1'
+  }]);
+  const executor = new RuntimeExecutor({ server, scheduler });
+
+  const run = executor.runOnce(teamId);
+  assert.equal(run.ok, true);
+  assert.equal(run.tasks_completed, 0);
+  assert.equal(run.tasks_blocked, 1);
+  assert.equal(run.tasks_skipped, 0);
+  assert.equal(run.task_results[0]?.final_status, 'blocked');
+
+  const task = server.store.getTask(taskId);
+  assert.equal(task?.status, 'blocked');
+  assert.match(String(task?.description ?? ''), /missing evidence signals/);
+  assert.equal(Boolean(server.store.getArtifact(teamId, `artifact_task_${taskId}`)), false);
 
   server.store.close();
 });
