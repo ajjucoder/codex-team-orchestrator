@@ -957,6 +957,7 @@ export function registerAgentLifecycleTools(
     let workerArtifacts: WorkerCollectArtifactsResult['artifacts'] | null = null;
     const workerErrors: Array<{ message?: unknown }> = [];
     const workerSession = workerSessionByAgentId.get(agentId);
+    const workerAdapterActive = Boolean(workerAdapter && workerSession);
     if (workerAdapter && workerSession) {
       const poll = workerAdapter.poll({
         worker_id: workerSession.worker_id,
@@ -1012,7 +1013,8 @@ export function registerAgentLifecycleTools(
       acked,
       worker_poll: workerPoll,
       worker_artifacts: workerArtifacts,
-      worker_errors: workerErrors
+      worker_errors: workerErrors,
+      worker_adapter_active: workerAdapterActive
     };
   });
 }
