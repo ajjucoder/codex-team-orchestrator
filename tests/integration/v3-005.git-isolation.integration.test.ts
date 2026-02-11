@@ -1,8 +1,10 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, rmSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createScheduler, createServer } from '../../mcp/server/index.js';
 import { RuntimeGitIsolationManager } from '../../mcp/runtime/git-manager.js';
+import { WorkerAdapter } from '../../mcp/runtime/worker-adapter.js';
 import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
 import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
@@ -127,6 +129,141 @@ test('V3-005 integration: scheduler enforces worker git isolation and cleans up 
   const runtimeIsolation = asRecord(asRecord(server.store.getTeam(teamId)?.metadata).runtime_git_isolation);
   const assignmentsAfterFinalize = asRecord(runtimeIsolation.assignments);
   assert.equal(Object.keys(assignmentsAfterFinalize).length, 0);
+
+  server.store.close();
+});
+
+test('V3-005 integration: team_send enforces assigned worktree cwd in production runtime path', () => {
+  const sends: Array<{ worker_id: string; cwd?: string }> = [];
+  const adapter = new WorkerAdapter({
+    name: 'mock-v3-005-int',
+    spawn: (input) => ({
+      worker_id: `worker_${input.agent_id}`,
+      status: 'spawned'
+    }),
+    sendInstruction: (input) => {
+      sends.push({ worker_id: input.worker_id, cwd: input.cwd });
+      return {
+        accepted: true,
+        instruction_id: `instruction_${sends.length}`,
+        status: 'queued'
+      };
+    },
+    poll: (input) => ({
+      worker_id: input.worker_id,
+      status: 'running',
+      cursor: input.cursor ?? null,
+      events: [],
+      output: {}
+    }),
+    interrupt: () => ({
+      interrupted: true,
+      status: 'interrupted'
+    }),
+    collectArtifacts: (input) => ({
+      worker_id: input.worker_id,
+      artifacts: []
+    })
+  });
+
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  const gitManager = new RuntimeGitIsolationManager({
+    store: server.store,
+    repoRoot
+  });
+  registerAgentLifecycleTools(server, { workerAdapter: adapter, gitManager });
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'v3-005 team_send cwd integration',
+    max_threads: 3,
+    profile: 'default'
+  });
+  assert.equal(started.ok, true);
+  const teamId = String(started.team.team_id);
+
+  const lead = server.callTool('team_spawn', {
+    team_id: teamId,
+    role: 'lead'
+  });
+  const worker = server.callTool('team_spawn', {
+    team_id: teamId,
+    role: 'implementer'
+  });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+
+  const createdTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'assignment bootstrap',
+    required_role: 'implementer',
+    priority: 1
+  });
+  assert.equal(createdTask.ok, true);
+  const scheduler = createScheduler({
+    server,
+    tickIntervalMs: 25,
+    readyTaskLimit: 50,
+    gitManager
+  });
+  const tick = scheduler.tick();
+  assert.equal(tick.dispatched_count >= 1, true);
+
+  const assignment = gitManager
+    .getTeamAssignments(teamId)
+    .find((entry) => entry.agent_id === String(worker.agent.agent_id));
+  if (!assignment) {
+    throw new Error('expected scheduler assignment for implementer');
+  }
+
+  const defaultCwdSend = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: String(lead.agent.agent_id),
+    to_agent_id: String(worker.agent.agent_id),
+    summary: 'default cwd',
+    artifact_refs: [],
+    idempotency_key: 'v3-005-int-cwd-default'
+  });
+  assert.equal(defaultCwdSend.ok, true);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0]?.cwd, assignment.worktree_path);
+
+  const insideCwd = resolve(assignment.worktree_path, 'workspace');
+  const insideSend = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: String(lead.agent.agent_id),
+    to_agent_id: String(worker.agent.agent_id),
+    summary: 'inside cwd',
+    cwd: insideCwd,
+    artifact_refs: [],
+    idempotency_key: 'v3-005-int-cwd-inside'
+  });
+  assert.equal(insideSend.ok, true);
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1]?.cwd, insideCwd);
+
+  const outsideCwd = resolve(repoRoot);
+  const rejected = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: String(lead.agent.agent_id),
+    to_agent_id: String(worker.agent.agent_id),
+    summary: 'outside cwd',
+    cwd: outsideCwd,
+    artifact_refs: [],
+    idempotency_key: 'v3-005-int-cwd-outside'
+  });
+  assert.equal(rejected.ok, false);
+  assert.match(String(rejected.error ?? ''), /outside assigned worktree/);
+  assert.equal(sends.length, 2);
+
+  const rejectedCount = server
+    .store
+    .db
+    .prepare('SELECT COUNT(*) AS count FROM messages WHERE idempotency_key = ?')
+    .get('v3-005-int-cwd-outside');
+  assert.equal(Number(rejectedCount?.count ?? 0), 0);
 
   server.store.close();
 });

@@ -31,6 +31,7 @@ export interface WorkerSpawnResult {
 export interface WorkerSendInstructionInput {
   worker_id: string;
   instruction: string;
+  cwd?: string;
   idempotency_key?: string;
   artifact_refs?: Array<{ artifact_id: string; version: number }>;
   metadata?: Record<string, unknown>;

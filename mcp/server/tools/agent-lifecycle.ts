@@ -9,6 +9,7 @@ import type {
   WorkerPollResult,
   WorkerSendInstructionResult
 } from '../../runtime/worker-adapter.js';
+import { RuntimeGitIsolationManager } from '../../runtime/git-manager.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -63,6 +64,7 @@ interface DuplicateResponse extends ToolResult {
 
 interface AgentLifecycleToolOptions {
   workerAdapter?: WorkerAdapter;
+  gitManager?: RuntimeGitIsolationManager;
 }
 
 interface WorkerSessionBinding {
@@ -302,6 +304,21 @@ function resolveWorkerAdapter(server: ToolServerLike, options: AgentLifecycleToo
   };
 }
 
+function resolveGitIsolationManager(server: ToolServerLike, options: AgentLifecycleToolOptions): RuntimeGitIsolationManager {
+  if (options.gitManager) {
+    return options.gitManager;
+  }
+
+  const fromServer = (server as ToolServerLike & { gitManager?: RuntimeGitIsolationManager }).gitManager;
+  if (fromServer) {
+    return fromServer;
+  }
+
+  return new RuntimeGitIsolationManager({
+    store: server.store
+  });
+}
+
 function workerEnvelopeFailure(prefix: string, error: { message?: unknown }): ToolResult {
   return {
     ok: false,
@@ -335,6 +352,7 @@ export function registerAgentLifecycleTools(
 ): void {
   const workerAdapterResolution = resolveWorkerAdapter(server, options);
   const workerAdapter = workerAdapterResolution.adapter;
+  const gitManager = resolveGitIsolationManager(server, options);
   const workerSessionByAgentId = new Map<string, WorkerSessionBinding>();
 
   server.registerTool('team_spawn', 'team_spawn.schema.json', (input) => {
@@ -517,6 +535,7 @@ export function registerAgentLifecycleTools(
     const toAgentId = readString(input, 'to_agent_id');
     const idempotencyKey = readString(input, 'idempotency_key');
     const summary = String(input.summary ?? '');
+    const requestedCwd = readOptionalString(input, 'cwd');
     const artifactRefs = readArtifactRefs(input);
 
     const teamLookup = getTeamOrError(server, teamId);
@@ -597,6 +616,35 @@ export function registerAgentLifecycleTools(
       return duplicateResponse(duplicate, 'direct');
     }
 
+    const recipientWorkerSession = workerSessionByAgentId.get(toAgentId);
+    let effectiveWorkerCwd: string | undefined;
+    if (workerAdapter && recipientWorkerSession) {
+      const assignment = gitManager.allocateForAgent({
+        team_id: teamId,
+        agent_id: toAgentId,
+        role: toLookup.agent.role
+      });
+      if (!assignment.ok || !assignment.assignment) {
+        return {
+          ok: false,
+          error: assignment.error ?? `failed to allocate git assignment for worker ${toAgentId}`
+        };
+      }
+
+      effectiveWorkerCwd = requestedCwd ?? assignment.assignment.worktree_path;
+      const guard = gitManager.assertWorkerContext({
+        team_id: teamId,
+        agent_id: toAgentId,
+        cwd: effectiveWorkerCwd
+      });
+      if (!guard.ok) {
+        return {
+          ok: false,
+          error: guard.error ?? 'worker command rejected by git isolation policy'
+        };
+      }
+    }
+
     const createdAt = nowIso();
     const result = server.store.appendMessage({
       message_id: newId('msg'),
@@ -627,11 +675,11 @@ export function registerAgentLifecycleTools(
 
     let workerDelivery: WorkerSendInstructionResult | null = null;
     if (result.inserted) {
-      const recipientWorkerSession = workerSessionByAgentId.get(toAgentId);
       if (workerAdapter && recipientWorkerSession) {
         const delivery = workerAdapter.sendInstruction({
           worker_id: recipientWorkerSession.worker_id,
           instruction: summary,
+          cwd: effectiveWorkerCwd,
           idempotency_key: idempotencyKey,
           artifact_refs: effectiveArtifactRefs,
           metadata: {
