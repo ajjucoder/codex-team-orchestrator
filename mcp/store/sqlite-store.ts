@@ -65,10 +65,77 @@ interface CancelTasksResult {
   tasks: TaskRecord[];
 }
 
+interface AppendMessageInputWithScope extends AppendMessageInput {
+  idempotency_scope?: string | null;
+}
+
+interface InboxAckSelection {
+  team_id: string;
+  agent_id: string;
+  inbox_ids?: number[];
+  message_ids?: string[];
+  ack_all?: boolean;
+  ack_at?: string;
+}
+
+interface InboxAckResult {
+  acked: number;
+  acked_inbox_ids: number[];
+  acked_message_ids: string[];
+}
+
+interface InboxFailureInput {
+  team_id: string;
+  agent_id: string;
+  inbox_ids?: number[];
+  message_ids?: string[];
+  error?: string;
+  max_attempts?: number;
+  base_backoff_ms?: number;
+  max_backoff_ms?: number;
+  now_iso?: string;
+}
+
+interface InboxFailureResult {
+  processed: number;
+  scheduled_retry: number;
+  dead_lettered: number;
+  retry_inbox_ids: number[];
+  dead_letter_inbox_ids: number[];
+}
+
+interface RecoverInboxOptions {
+  in_flight_timeout_ms?: number;
+  max_attempts?: number;
+  base_backoff_ms?: number;
+  max_backoff_ms?: number;
+  now_iso?: string;
+}
+
+interface RecoverInboxResult {
+  recovered: number;
+  scheduled_retry: number;
+  dead_lettered: number;
+  retry_inbox_ids: number[];
+  dead_letter_inbox_ids: number[];
+}
+
 const DEFAULT_TASK_LEASE_MS = 5 * 60 * 1000;
+const DEFAULT_INBOX_MAX_ATTEMPTS = 5;
+const DEFAULT_INBOX_BASE_BACKOFF_MS = 1000;
+const DEFAULT_INBOX_MAX_BACKOFF_MS = 60000;
+const DEFAULT_INBOX_IN_FLIGHT_TIMEOUT_MS = 20000;
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function coerceIsoTimestamp(value: unknown, fallback = nowIso()): string {
+  const parsed = Date.parse(String(value ?? ''));
+  if (Number.isFinite(parsed)) {
+    return new Date(parsed).toISOString();
+  }
+  return fallback;
 }
 
 function isLockError(error: unknown): boolean {
@@ -153,6 +220,64 @@ function normalizeRetryCount(value: unknown): number {
   const retryCount = Number(value);
   if (!Number.isFinite(retryCount) || retryCount < 0) return 0;
   return Math.floor(retryCount);
+}
+
+function normalizePositiveInt(value: unknown, fallback: number, min = 1): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(min, Math.floor(fallback));
+  return Math.max(min, Math.floor(parsed));
+}
+
+function normalizeNumberList(values: number[] = []): number[] {
+  return [...new Set(
+    values
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value))
+  )];
+}
+
+function normalizeStringList(values: string[] = []): string[] {
+  return [...new Set(
+    values
+      .map((value) => String(value ?? '').trim())
+      .filter((value) => value.length > 0)
+  )];
+}
+
+function computeMessageRouteKey({
+  delivery_mode,
+  from_agent_id,
+  to_agent_id = null
+}: Pick<MessageRecord, 'delivery_mode' | 'from_agent_id'> & { to_agent_id?: string | null }): string {
+  if (delivery_mode === 'broadcast') {
+    return `broadcast:${from_agent_id}`;
+  }
+  if (delivery_mode === 'direct') {
+    return `direct:${from_agent_id}->${to_agent_id ?? ''}`;
+  }
+  return `${delivery_mode}:${from_agent_id}->${to_agent_id ?? ''}`;
+}
+
+function normalizeIdempotencyScope(value: unknown, routeKey: string): string {
+  if (typeof value !== 'string') return routeKey;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : routeKey;
+}
+
+function computeRetryBackoffMs({
+  attemptCount,
+  baseBackoffMs,
+  maxBackoffMs
+}: {
+  attemptCount: number;
+  baseBackoffMs: number;
+  maxBackoffMs: number;
+}): number {
+  const safeAttemptCount = Math.max(1, normalizeRetryCount(attemptCount));
+  const exponent = Math.max(0, safeAttemptCount - 1);
+  const raw = baseBackoffMs * Math.pow(2, exponent);
+  return Math.min(maxBackoffMs, raw);
 }
 
 function hydrateExecutionAttempt(row: Record<string, unknown>): TaskExecutionAttemptRecord {
@@ -517,11 +642,28 @@ export class SqliteStore {
     return this.getAgent(agentId);
   }
 
-  appendMessage(message: AppendMessageInput): AppendMessageResult {
+  appendMessage(message: AppendMessageInputWithScope): AppendMessageResult {
+    const routeKey = computeMessageRouteKey({
+      delivery_mode: message.delivery_mode,
+      from_agent_id: message.from_agent_id,
+      to_agent_id: message.to_agent_id ?? null
+    });
+    const idempotencyScope = normalizeIdempotencyScope(message.idempotency_scope, routeKey);
+    const normalizedCreatedAt = coerceIsoTimestamp(message.created_at, nowIso());
+    const normalizedPayload = normalizeMessagePayload(message.payload);
+
     const result = this.runWithRetry(() => {
       const existing = this.db
-        .prepare('SELECT * FROM messages WHERE team_id = ? AND idempotency_key = ?')
-        .get(message.team_id, message.idempotency_key);
+        .prepare(
+          `SELECT *
+           FROM messages
+           WHERE team_id = ?
+             AND idempotency_scope = ?
+             AND idempotency_key = ?
+           ORDER BY created_at DESC, message_id DESC
+           LIMIT 1`
+        )
+        .get(message.team_id, idempotencyScope, message.idempotency_key);
       if (existing) {
         return {
           inserted: false,
@@ -534,7 +676,10 @@ export class SqliteStore {
 
       this.db
         .prepare(
-          'INSERT INTO messages(message_id, team_id, from_agent_id, to_agent_id, delivery_mode, payload_json, idempotency_key, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)'
+          `INSERT INTO messages(
+             message_id, team_id, from_agent_id, to_agent_id, delivery_mode, route_key,
+             payload_json, idempotency_key, idempotency_scope, created_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           message.message_id,
@@ -542,15 +687,23 @@ export class SqliteStore {
           message.from_agent_id,
           message.to_agent_id ?? null,
           message.delivery_mode,
-          JSON.stringify(message.payload),
+          routeKey,
+          JSON.stringify(normalizedPayload),
           message.idempotency_key,
-          message.created_at
+          idempotencyScope,
+          normalizedCreatedAt
         );
 
       if (message.recipient_agent_ids?.length) {
-        const stmt = this.db.prepare('INSERT OR IGNORE INTO inbox(message_id, team_id, agent_id, delivered_at, ack_at) VALUES(?, ?, ?, ?, NULL)');
-        for (const agentId of message.recipient_agent_ids) {
-          stmt.run(message.message_id, message.team_id, agentId, message.created_at);
+        const recipientIds = normalizeStringList(message.recipient_agent_ids);
+        const stmt = this.db.prepare(
+          `INSERT OR IGNORE INTO inbox(
+             message_id, team_id, agent_id, delivered_at, ack_at,
+             attempt_count, next_attempt_at, last_attempt_at, last_error, dead_letter_at
+           ) VALUES(?, ?, ?, ?, NULL, 0, ?, NULL, NULL, NULL)`
+        );
+        for (const agentId of recipientIds) {
+          stmt.run(message.message_id, message.team_id, agentId, normalizedCreatedAt, normalizedCreatedAt);
         }
       }
 
@@ -576,28 +729,21 @@ export class SqliteStore {
     to_agent_id = null,
     delivery_mode
   }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & { to_agent_id?: string | null }): MessageRecord | null {
-    let row;
-    if (delivery_mode === 'direct') {
-      row = this.db
-        .prepare(
-          `SELECT *
-           FROM messages
-           WHERE team_id = ? AND from_agent_id = ? AND to_agent_id = ? AND delivery_mode = 'direct'
-           ORDER BY created_at DESC, message_id DESC
-           LIMIT 1`
-        )
-        .get(team_id, from_agent_id, to_agent_id);
-    } else {
-      row = this.db
-        .prepare(
-          `SELECT *
-           FROM messages
-           WHERE team_id = ? AND from_agent_id = ? AND delivery_mode = 'broadcast'
-           ORDER BY created_at DESC, message_id DESC
-           LIMIT 1`
-        )
-        .get(team_id, from_agent_id);
-    }
+    const routeKey = computeMessageRouteKey({
+      delivery_mode,
+      from_agent_id,
+      to_agent_id
+    });
+    const row = this.db
+      .prepare(
+        `SELECT *
+         FROM messages
+         WHERE team_id = ?
+           AND route_key = ?
+         ORDER BY created_at DESC, message_id DESC
+         LIMIT 1`
+      )
+      .get(team_id, routeKey);
 
     if (!row) return null;
     return {
@@ -620,28 +766,21 @@ export class SqliteStore {
     within_ms?: number;
     limit?: number;
   }): MessageRecord | null {
-    let rows;
-    if (delivery_mode === 'direct') {
-      rows = this.db
-        .prepare(
-          `SELECT *
-           FROM messages
-           WHERE team_id = ? AND from_agent_id = ? AND to_agent_id = ? AND delivery_mode = 'direct'
-           ORDER BY created_at DESC, message_id DESC
-           LIMIT ?`
-        )
-        .all(team_id, from_agent_id, to_agent_id, limit);
-    } else {
-      rows = this.db
-        .prepare(
-          `SELECT *
-           FROM messages
-           WHERE team_id = ? AND from_agent_id = ? AND delivery_mode = 'broadcast'
-           ORDER BY created_at DESC, message_id DESC
-           LIMIT ?`
-        )
-        .all(team_id, from_agent_id, limit);
-    }
+    const routeKey = computeMessageRouteKey({
+      delivery_mode,
+      from_agent_id,
+      to_agent_id
+    });
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM messages
+         WHERE team_id = ?
+           AND route_key = ?
+         ORDER BY created_at DESC, message_id DESC
+         LIMIT ?`
+      )
+      .all(team_id, routeKey, limit);
 
     const cutoffMs = Date.now() - within_ms;
     for (const row of rows) {
@@ -661,16 +800,33 @@ export class SqliteStore {
   }
 
   pullInbox(teamId: string, agentId: string, limit = 20): InboxRecord[] {
+    const safeLimit = normalizePositiveInt(limit, 20);
+    const now = nowIso();
     const rows = this.db
       .prepare(
         `SELECT i.id as inbox_id, i.message_id, i.delivered_at, m.from_agent_id, m.to_agent_id, m.delivery_mode, m.payload_json, m.idempotency_key
          FROM inbox i
          JOIN messages m ON m.message_id = i.message_id
-         WHERE i.team_id = ? AND i.agent_id = ? AND i.ack_at IS NULL
-         ORDER BY i.delivered_at ASC
+         WHERE i.team_id = ?
+           AND i.agent_id = ?
+           AND i.ack_at IS NULL
+           AND i.dead_letter_at IS NULL
+           AND (i.next_attempt_at IS NULL OR i.next_attempt_at <= ?)
+         ORDER BY COALESCE(i.next_attempt_at, i.delivered_at) ASC, i.delivered_at ASC, i.id ASC
          LIMIT ?`
       )
-      .all(teamId, agentId, limit);
+      .all(teamId, agentId, now, safeLimit);
+
+    const inboxIds = normalizeNumberList(rows.map((row) => Number(row.inbox_id)));
+    if (inboxIds.length > 0) {
+      this.runWithRetry(() => {
+        const update = this.db
+          .prepare('UPDATE inbox SET last_attempt_at = ? WHERE id = ? AND ack_at IS NULL AND dead_letter_at IS NULL');
+        for (const inboxId of inboxIds) {
+          update.run(now, inboxId);
+        }
+      });
+    }
 
     return rows.map((row) => ({
       inbox_id: Number(row.inbox_id),
@@ -684,17 +840,336 @@ export class SqliteStore {
     }));
   }
 
-  ackInbox(inboxIds: number[] = []): number {
-    if (inboxIds.length === 0) return 0;
-    const stmt = this.db.prepare('UPDATE inbox SET ack_at = ? WHERE id = ?');
-    let count = 0;
+  ackInbox(inboxIds?: number[]): number;
+  ackInbox(selection: InboxAckSelection): InboxAckResult;
+  ackInbox(selection: number[] | InboxAckSelection = []): number | InboxAckResult {
+    if (Array.isArray(selection)) {
+      const inboxIds = normalizeNumberList(selection);
+      if (inboxIds.length === 0) return 0;
+      const stmt = this.db.prepare(
+        'UPDATE inbox SET ack_at = ?, next_attempt_at = NULL WHERE id = ? AND ack_at IS NULL AND dead_letter_at IS NULL'
+      );
+      let count = 0;
+      const ackedAt = nowIso();
+      this.runWithRetry(() => {
+        for (const id of inboxIds) {
+          const res = stmt.run(ackedAt, id);
+          count += Number(res.changes || 0);
+        }
+      });
+      return count;
+    }
+
+    const inboxIds = normalizeNumberList(selection.inbox_ids ?? []);
+    const messageIds = normalizeStringList(selection.message_ids ?? []);
+    const ackAll = Boolean(selection.ack_all);
+    if (!ackAll && inboxIds.length === 0 && messageIds.length === 0) {
+      return {
+        acked: 0,
+        acked_inbox_ids: [],
+        acked_message_ids: []
+      };
+    }
+
+    const conditions: string[] = [
+      'team_id = ?',
+      'agent_id = ?',
+      'ack_at IS NULL',
+      'dead_letter_at IS NULL'
+    ];
+    const params: Array<string | number> = [selection.team_id, selection.agent_id];
+    if (!ackAll) {
+      const selectors: string[] = [];
+      if (inboxIds.length > 0) {
+        selectors.push(`id IN (${inboxIds.map(() => '?').join(', ')})`);
+        params.push(...inboxIds);
+      }
+      if (messageIds.length > 0) {
+        selectors.push(`message_id IN (${messageIds.map(() => '?').join(', ')})`);
+        params.push(...messageIds);
+      }
+      conditions.push(`(${selectors.join(' OR ')})`);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, message_id
+         FROM inbox
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY id ASC`
+      )
+      .all(...params);
+    const ackedInboxIds = normalizeNumberList(rows.map((row) => Number(row.id)));
+    if (ackedInboxIds.length === 0) {
+      return {
+        acked: 0,
+        acked_inbox_ids: [],
+        acked_message_ids: []
+      };
+    }
+
+    const ackedAt = coerceIsoTimestamp(selection.ack_at, nowIso());
+    let acked = 0;
     this.runWithRetry(() => {
-      for (const id of inboxIds) {
-        const res = stmt.run(nowIso(), id);
-        count += Number(res.changes || 0);
+      const stmt = this.db.prepare(
+        'UPDATE inbox SET ack_at = ?, next_attempt_at = NULL WHERE id = ? AND ack_at IS NULL AND dead_letter_at IS NULL'
+      );
+      for (const inboxId of ackedInboxIds) {
+        const result = stmt.run(ackedAt, inboxId);
+        acked += Number(result.changes || 0);
       }
     });
-    return count;
+
+    this.touchTeam(selection.team_id, ackedAt);
+    return {
+      acked,
+      acked_inbox_ids: ackedInboxIds,
+      acked_message_ids: normalizeStringList(rows.map((row) => String(row.message_id)))
+    };
+  }
+
+  failInbox(input: InboxFailureInput): InboxFailureResult {
+    const nowValue = coerceIsoTimestamp(input.now_iso, nowIso());
+    const nowMs = Date.parse(nowValue);
+    const inboxIds = normalizeNumberList(input.inbox_ids ?? []);
+    const messageIds = normalizeStringList(input.message_ids ?? []);
+    const maxAttempts = normalizePositiveInt(input.max_attempts, DEFAULT_INBOX_MAX_ATTEMPTS);
+    const baseBackoffMs = normalizePositiveInt(input.base_backoff_ms, DEFAULT_INBOX_BASE_BACKOFF_MS);
+    const maxBackoffMs = Math.max(
+      baseBackoffMs,
+      normalizePositiveInt(input.max_backoff_ms, DEFAULT_INBOX_MAX_BACKOFF_MS)
+    );
+    const normalizedError = String(input.error ?? 'delivery_failed').slice(0, 2000);
+
+    const conditions: string[] = [
+      'team_id = ?',
+      'agent_id = ?',
+      'ack_at IS NULL',
+      'dead_letter_at IS NULL'
+    ];
+    const params: Array<string | number> = [input.team_id, input.agent_id];
+    if (inboxIds.length > 0 || messageIds.length > 0) {
+      const selectors: string[] = [];
+      if (inboxIds.length > 0) {
+        selectors.push(`id IN (${inboxIds.map(() => '?').join(', ')})`);
+        params.push(...inboxIds);
+      }
+      if (messageIds.length > 0) {
+        selectors.push(`message_id IN (${messageIds.map(() => '?').join(', ')})`);
+        params.push(...messageIds);
+      }
+      conditions.push(`(${selectors.join(' OR ')})`);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, message_id, attempt_count
+         FROM inbox
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY id ASC`
+      )
+      .all(...params);
+
+    let processed = 0;
+    let scheduledRetry = 0;
+    let deadLettered = 0;
+    const retryInboxIds: number[] = [];
+    const deadLetterInboxIds: number[] = [];
+    const retryUpdate = this.db.prepare(
+      `UPDATE inbox
+       SET attempt_count = ?,
+           next_attempt_at = ?,
+           last_attempt_at = NULL,
+           last_error = ?,
+           dead_letter_at = NULL
+       WHERE id = ?
+         AND ack_at IS NULL
+         AND dead_letter_at IS NULL`
+    );
+    const deadLetterUpdate = this.db.prepare(
+      `UPDATE inbox
+       SET attempt_count = ?,
+           next_attempt_at = NULL,
+           last_attempt_at = ?,
+           last_error = ?,
+           dead_letter_at = ?
+       WHERE id = ?
+         AND ack_at IS NULL
+         AND dead_letter_at IS NULL`
+    );
+
+    this.runWithRetry(() => {
+      for (const row of rows) {
+        const inboxId = Number(row.id);
+        const nextAttemptCount = normalizeRetryCount(row.attempt_count) + 1;
+        if (nextAttemptCount >= maxAttempts) {
+          const result = deadLetterUpdate.run(
+            nextAttemptCount,
+            nowValue,
+            normalizedError,
+            nowValue,
+            inboxId
+          );
+          const changed = Number(result.changes || 0);
+          processed += changed;
+          deadLettered += changed;
+          if (changed > 0) {
+            deadLetterInboxIds.push(inboxId);
+          }
+          continue;
+        }
+
+        const backoffMs = computeRetryBackoffMs({
+          attemptCount: nextAttemptCount,
+          baseBackoffMs,
+          maxBackoffMs
+        });
+        const nextAttemptAt = new Date(nowMs + backoffMs).toISOString();
+        const result = retryUpdate.run(
+          nextAttemptCount,
+          nextAttemptAt,
+          normalizedError,
+          inboxId
+        );
+        const changed = Number(result.changes || 0);
+        processed += changed;
+        scheduledRetry += changed;
+        if (changed > 0) {
+          retryInboxIds.push(inboxId);
+        }
+      }
+    });
+
+    if (processed > 0) {
+      this.touchTeam(input.team_id, nowValue);
+    }
+    return {
+      processed,
+      scheduled_retry: scheduledRetry,
+      dead_lettered: deadLettered,
+      retry_inbox_ids: retryInboxIds,
+      dead_letter_inbox_ids: deadLetterInboxIds
+    };
+  }
+
+  recoverInbox(team_id: string, options: RecoverInboxOptions = {}): RecoverInboxResult {
+    const nowValue = coerceIsoTimestamp(options.now_iso, nowIso());
+    const nowMs = Date.parse(nowValue);
+    const inFlightTimeoutMs = normalizePositiveInt(
+      options.in_flight_timeout_ms,
+      DEFAULT_INBOX_IN_FLIGHT_TIMEOUT_MS
+    );
+    const maxAttempts = normalizePositiveInt(options.max_attempts, DEFAULT_INBOX_MAX_ATTEMPTS);
+    const baseBackoffMs = normalizePositiveInt(options.base_backoff_ms, DEFAULT_INBOX_BASE_BACKOFF_MS);
+    const maxBackoffMs = Math.max(
+      baseBackoffMs,
+      normalizePositiveInt(options.max_backoff_ms, DEFAULT_INBOX_MAX_BACKOFF_MS)
+    );
+    const staleCutoffIso = new Date(nowMs - inFlightTimeoutMs).toISOString();
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, message_id, attempt_count
+         FROM inbox
+         WHERE team_id = ?
+           AND ack_at IS NULL
+           AND dead_letter_at IS NULL
+           AND last_attempt_at IS NOT NULL
+           AND last_attempt_at <= ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+         ORDER BY last_attempt_at ASC, id ASC`
+      )
+      .all(team_id, staleCutoffIso, nowValue);
+    if (rows.length === 0) {
+      return {
+        recovered: 0,
+        scheduled_retry: 0,
+        dead_lettered: 0,
+        retry_inbox_ids: [],
+        dead_letter_inbox_ids: []
+      };
+    }
+
+    let recovered = 0;
+    let scheduledRetry = 0;
+    let deadLettered = 0;
+    const retryInboxIds: number[] = [];
+    const deadLetterInboxIds: number[] = [];
+    const retryUpdate = this.db.prepare(
+      `UPDATE inbox
+       SET attempt_count = ?,
+           next_attempt_at = ?,
+           last_attempt_at = NULL,
+           last_error = ?,
+           dead_letter_at = NULL
+       WHERE id = ?
+         AND ack_at IS NULL
+         AND dead_letter_at IS NULL`
+    );
+    const deadLetterUpdate = this.db.prepare(
+      `UPDATE inbox
+       SET attempt_count = ?,
+           next_attempt_at = NULL,
+           last_attempt_at = ?,
+           last_error = ?,
+           dead_letter_at = ?
+       WHERE id = ?
+         AND ack_at IS NULL
+         AND dead_letter_at IS NULL`
+    );
+
+    this.runWithRetry(() => {
+      for (const row of rows) {
+        const inboxId = Number(row.id);
+        const nextAttemptCount = normalizeRetryCount(row.attempt_count) + 1;
+        if (nextAttemptCount >= maxAttempts) {
+          const result = deadLetterUpdate.run(
+            nextAttemptCount,
+            nowValue,
+            'delivery_timeout_recovered',
+            nowValue,
+            inboxId
+          );
+          const changed = Number(result.changes || 0);
+          recovered += changed;
+          deadLettered += changed;
+          if (changed > 0) {
+            deadLetterInboxIds.push(inboxId);
+          }
+          continue;
+        }
+
+        const backoffMs = computeRetryBackoffMs({
+          attemptCount: nextAttemptCount,
+          baseBackoffMs,
+          maxBackoffMs
+        });
+        const nextAttemptAt = new Date(nowMs + backoffMs).toISOString();
+        const result = retryUpdate.run(
+          nextAttemptCount,
+          nextAttemptAt,
+          'delivery_timeout_recovered',
+          inboxId
+        );
+        const changed = Number(result.changes || 0);
+        recovered += changed;
+        scheduledRetry += changed;
+        if (changed > 0) {
+          retryInboxIds.push(inboxId);
+        }
+      }
+    });
+
+    if (recovered > 0) {
+      this.touchTeam(team_id, nowValue);
+    }
+    return {
+      recovered,
+      scheduled_retry: scheduledRetry,
+      dead_lettered: deadLettered,
+      retry_inbox_ids: retryInboxIds,
+      dead_letter_inbox_ids: deadLetterInboxIds
+    };
   }
 
   createTask(task: TaskCreateInput): TaskRecord | null {

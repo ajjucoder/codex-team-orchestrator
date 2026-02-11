@@ -34,9 +34,32 @@ export function registerRecoveryTools(server: ToolServerLike): void {
         readNumber(input, 'agent_stale_ms', readNumber(recoveryPolicy, 'agent_stale_ms', 300000))
       )
     );
+    const inFlightTimeoutMs = Math.max(
+      1,
+      Math.floor(readNumber(recoveryPolicy, 'in_flight_timeout_ms', 20000))
+    );
+    const maxAttempts = Math.max(
+      1,
+      Math.floor(readNumber(recoveryPolicy, 'max_attempts', 5))
+    );
+    const baseBackoffMs = Math.max(
+      1,
+      Math.floor(readNumber(recoveryPolicy, 'base_backoff_ms', 1000))
+    );
+    const maxBackoffMs = Math.max(
+      baseBackoffMs,
+      Math.floor(readNumber(recoveryPolicy, 'max_backoff_ms', 60000))
+    );
     const cutoffIso = new Date(nowMs - staleMs).toISOString();
 
     const leaseRecovery = server.store.recoverExpiredTaskLeases(teamId, nowIso);
+    const inboxRecovery = server.store.recoverInbox(teamId, {
+      now_iso: nowIso,
+      in_flight_timeout_ms: inFlightTimeoutMs,
+      max_attempts: maxAttempts,
+      base_backoff_ms: baseBackoffMs,
+      max_backoff_ms: maxBackoffMs
+    });
     const staleAgents = server.store.markStaleAgentsOffline(teamId, cutoffIso);
 
     server.store.logEvent({
@@ -46,6 +69,9 @@ export function registerRecoveryTools(server: ToolServerLike): void {
         now_iso: nowIso,
         stale_cutoff_iso: cutoffIso,
         recovered_tasks: leaseRecovery.recovered,
+        recovered_inbox: inboxRecovery.recovered,
+        inbox_scheduled_retry: inboxRecovery.scheduled_retry,
+        inbox_dead_lettered: inboxRecovery.dead_lettered,
         marked_agents_offline: staleAgents.marked_offline
       }
     });
@@ -55,6 +81,11 @@ export function registerRecoveryTools(server: ToolServerLike): void {
       team_id: teamId,
       recovered_tasks: leaseRecovery.recovered,
       recovered_task_ids: leaseRecovery.tasks.map((task) => task.task_id),
+      recovered_inbox: inboxRecovery.recovered,
+      inbox_scheduled_retry: inboxRecovery.scheduled_retry,
+      inbox_dead_lettered: inboxRecovery.dead_lettered,
+      inbox_retry_inbox_ids: inboxRecovery.retry_inbox_ids,
+      inbox_dead_letter_inbox_ids: inboxRecovery.dead_letter_inbox_ids,
       marked_agents_offline: staleAgents.marked_offline,
       stale_agent_ids: staleAgents.agents.map((agent) => agent.agent_id)
     };
