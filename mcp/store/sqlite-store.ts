@@ -120,6 +120,47 @@ interface RecoverInboxResult {
   dead_letter_inbox_ids: number[];
 }
 
+interface RecoverySnapshotOptions {
+  now_iso?: string;
+  agent_stale_ms?: number;
+  limit?: number;
+}
+
+interface RecoverySnapshot {
+  now_iso: string;
+  stale_cutoff_iso: string;
+  queue: {
+    open_tasks: number;
+    todo_tasks: number;
+    ready_tasks: number;
+    in_progress_tasks: number;
+    blocked_tasks: number;
+    failed_terminal_tasks: number;
+    ready_task_ids: string[];
+    in_progress_task_ids: string[];
+  };
+  leases: {
+    expired_count: number;
+    expired_task_ids: string[];
+  };
+  workers: {
+    busy_agents: number;
+    idle_agents: number;
+    offline_agents: number;
+    stale_agent_count: number;
+    stale_agent_ids: string[];
+  };
+  inbox: {
+    pending_count: number;
+    retry_ready_count: number;
+    dead_letter_count: number;
+  };
+  execution: {
+    in_flight_count: number;
+    in_flight_execution_ids: string[];
+  };
+}
+
 const DEFAULT_TASK_LEASE_MS = 5 * 60 * 1000;
 const DEFAULT_INBOX_MAX_ATTEMPTS = 5;
 const DEFAULT_INBOX_BASE_BACKOFF_MS = 1000;
@@ -1522,6 +1563,192 @@ export class SqliteStore {
       ...row,
       metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {})
     })) as ArtifactRecord[];
+  }
+
+  buildRecoverySnapshot(team_id: string, options: RecoverySnapshotOptions = {}): RecoverySnapshot {
+    const nowValue = coerceIsoTimestamp(options.now_iso, nowIso());
+    const nowMs = Date.parse(nowValue);
+    const staleMs = normalizePositiveInt(options.agent_stale_ms, 300000);
+    const limit = normalizePositiveInt(options.limit, 20);
+    const staleCutoffIso = new Date(nowMs - staleMs).toISOString();
+
+    const taskStatusRows = this.db
+      .prepare('SELECT status, COUNT(*) as n FROM tasks WHERE team_id = ? GROUP BY status')
+      .all(team_id) as Array<Record<string, unknown>>;
+    const taskCountByStatus = new Map<string, number>();
+    for (const row of taskStatusRows) {
+      taskCountByStatus.set(String(row.status ?? ''), Number(row.n ?? 0));
+    }
+
+    const readyCountRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n FROM (
+           SELECT t.task_id
+           FROM tasks t
+           LEFT JOIN task_dependencies td
+             ON td.team_id = t.team_id
+            AND td.task_id = t.task_id
+           LEFT JOIN tasks dep
+             ON dep.team_id = td.team_id
+            AND dep.task_id = td.depends_on_task_id
+            AND dep.status != 'done'
+           WHERE t.team_id = ?
+             AND t.status = 'todo'
+           GROUP BY t.task_id
+           HAVING COUNT(dep.task_id) = 0
+         ) ready`
+      )
+      .get(team_id) as Record<string, unknown> | undefined;
+    const readyTaskRows = this.db
+      .prepare(
+        `SELECT t.task_id
+         FROM tasks t
+         LEFT JOIN task_dependencies td
+           ON td.team_id = t.team_id
+          AND td.task_id = t.task_id
+         LEFT JOIN tasks dep
+           ON dep.team_id = td.team_id
+          AND dep.task_id = td.depends_on_task_id
+          AND dep.status != 'done'
+         WHERE t.team_id = ?
+           AND t.status = 'todo'
+         GROUP BY t.task_id
+         HAVING COUNT(dep.task_id) = 0
+         ORDER BY t.priority ASC, t.created_at ASC, t.task_id ASC
+         LIMIT ?`
+      )
+      .all(team_id, limit) as Array<Record<string, unknown>>;
+    const inProgressRows = this.db
+      .prepare(
+        `SELECT task_id
+         FROM tasks
+         WHERE team_id = ?
+           AND status = 'in_progress'
+         ORDER BY priority ASC, updated_at ASC, task_id ASC
+         LIMIT ?`
+      )
+      .all(team_id, limit) as Array<Record<string, unknown>>;
+    const expiredLeaseTasks = this.listExpiredTaskLeases(team_id, nowValue);
+
+    const agentStatusRows = this.db
+      .prepare('SELECT status, COUNT(*) as n FROM agents WHERE team_id = ? GROUP BY status')
+      .all(team_id) as Array<Record<string, unknown>>;
+    const agentCountByStatus = new Map<string, number>();
+    for (const row of agentStatusRows) {
+      agentCountByStatus.set(String(row.status ?? ''), Number(row.n ?? 0));
+    }
+    const staleAgentCountRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM agents
+         WHERE team_id = ?
+           AND status != 'offline'
+           AND COALESCE(last_heartbeat_at, created_at) <= ?`
+      )
+      .get(team_id, staleCutoffIso) as Record<string, unknown> | undefined;
+    const staleAgentRows = this.db
+      .prepare(
+        `SELECT agent_id
+         FROM agents
+         WHERE team_id = ?
+           AND status != 'offline'
+           AND COALESCE(last_heartbeat_at, created_at) <= ?
+         ORDER BY updated_at ASC, agent_id ASC
+         LIMIT ?`
+      )
+      .all(team_id, staleCutoffIso, limit) as Array<Record<string, unknown>>;
+
+    const pendingInboxRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM inbox
+         WHERE team_id = ?
+           AND ack_at IS NULL
+           AND dead_letter_at IS NULL`
+      )
+      .get(team_id) as Record<string, unknown> | undefined;
+    const retryReadyRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM inbox
+         WHERE team_id = ?
+           AND ack_at IS NULL
+           AND dead_letter_at IS NULL
+           AND next_attempt_at IS NOT NULL
+           AND next_attempt_at <= ?`
+      )
+      .get(team_id, nowValue) as Record<string, unknown> | undefined;
+    const deadLetterRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM inbox
+         WHERE team_id = ?
+           AND dead_letter_at IS NOT NULL`
+      )
+      .get(team_id) as Record<string, unknown> | undefined;
+
+    const inFlightCountRow = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM task_execution_attempts
+         WHERE team_id = ?
+           AND status IN ('dispatching', 'executing', 'validating', 'integrating')`
+      )
+      .get(team_id) as Record<string, unknown> | undefined;
+    const inFlightRows = this.db
+      .prepare(
+        `SELECT execution_id
+         FROM task_execution_attempts
+         WHERE team_id = ?
+           AND status IN ('dispatching', 'executing', 'validating', 'integrating')
+         ORDER BY updated_at DESC, created_at DESC, execution_id DESC
+         LIMIT ?`
+      )
+      .all(team_id, limit) as Array<Record<string, unknown>>;
+
+    const todoTasks = Number(taskCountByStatus.get('todo') ?? 0);
+    const inProgressTasks = Number(taskCountByStatus.get('in_progress') ?? 0);
+    const blockedTasks = Number(taskCountByStatus.get('blocked') ?? 0);
+    const failedTerminalTasks = Number(taskCountByStatus.get('failed_terminal') ?? 0);
+    const cancelledTasks = Number(taskCountByStatus.get('cancelled') ?? 0);
+    const doneTasks = Number(taskCountByStatus.get('done') ?? 0);
+    const openTasks = Math.max(0, todoTasks + inProgressTasks + blockedTasks + failedTerminalTasks);
+    const readyTasks = Number(readyCountRow?.n ?? 0);
+
+    return {
+      now_iso: nowValue,
+      stale_cutoff_iso: staleCutoffIso,
+      queue: {
+        open_tasks: openTasks,
+        todo_tasks: todoTasks,
+        ready_tasks: readyTasks,
+        in_progress_tasks: inProgressTasks,
+        blocked_tasks: blockedTasks,
+        failed_terminal_tasks: failedTerminalTasks,
+        ready_task_ids: readyTaskRows.map((row) => String(row.task_id)),
+        in_progress_task_ids: inProgressRows.map((row) => String(row.task_id))
+      },
+      leases: {
+        expired_count: expiredLeaseTasks.length,
+        expired_task_ids: expiredLeaseTasks.slice(0, limit).map((task) => task.task_id)
+      },
+      workers: {
+        busy_agents: Number(agentCountByStatus.get('busy') ?? 0),
+        idle_agents: Number(agentCountByStatus.get('idle') ?? 0),
+        offline_agents: Number(agentCountByStatus.get('offline') ?? 0),
+        stale_agent_count: Number(staleAgentCountRow?.n ?? 0),
+        stale_agent_ids: staleAgentRows.map((row) => String(row.agent_id))
+      },
+      inbox: {
+        pending_count: Number(pendingInboxRow?.n ?? 0),
+        retry_ready_count: Number(retryReadyRow?.n ?? 0),
+        dead_letter_count: Number(deadLetterRow?.n ?? 0)
+      },
+      execution: {
+        in_flight_count: Number(inFlightCountRow?.n ?? 0),
+        in_flight_execution_ids: inFlightRows.map((row) => String(row.execution_id))
+      }
+    };
   }
 
   touchTeam(teamId: string, at = nowIso()): void {

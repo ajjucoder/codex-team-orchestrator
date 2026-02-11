@@ -220,6 +220,24 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
       'SELECT COUNT(*) as n FROM inbox WHERE team_id = ? AND ack_at IS NULL',
       teamId
     );
+    const policy = server.policyEngine?.resolveTeamPolicy(resumedTeam) ?? {};
+    const recoveryPolicy = (
+      policy.recovery && typeof policy.recovery === 'object'
+        ? policy.recovery as Record<string, unknown>
+        : {}
+    );
+    const staleMs = Math.max(
+      1,
+      Math.floor(
+        readOptionalNumber(input, 'agent_stale_ms')
+          ?? Number(recoveryPolicy.agent_stale_ms ?? 300000)
+      )
+    );
+    const detailedRecoverySnapshot = server.store.buildRecoverySnapshot(teamId, {
+      now_iso: nowIso(),
+      agent_stale_ms: staleMs,
+      limit: 20
+    });
     const contextAgentId = typeof context.agent_id === 'string' ? context.agent_id : null;
     const checkpoint = readRecord(resumedTeam.metadata?.context_checkpoint);
     const reset = readRecord(resumedTeam.metadata?.context_reset);
@@ -246,7 +264,12 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
       event_type: 'team_resumed',
       payload: {
         open_tasks: openTasks,
-        pending_inbox: pendingInbox
+        pending_inbox: pendingInbox,
+        queue_ready_tasks: detailedRecoverySnapshot.queue.ready_tasks,
+        in_progress_tasks: detailedRecoverySnapshot.queue.in_progress_tasks,
+        expired_leases: detailedRecoverySnapshot.leases.expired_count,
+        stale_agents: detailedRecoverySnapshot.workers.stale_agent_count,
+        in_flight_executions: detailedRecoverySnapshot.execution.in_flight_count
       }
     });
 
@@ -261,7 +284,13 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
         open_tasks: openTasks,
         pending_inbox: pendingInbox,
         checkpoint: checkpointSnapshot,
-        context_reset: resetSnapshot
+        context_reset: resetSnapshot,
+        queue: detailedRecoverySnapshot.queue,
+        leases: detailedRecoverySnapshot.leases,
+        workers: detailedRecoverySnapshot.workers,
+        inbox: detailedRecoverySnapshot.inbox,
+        execution: detailedRecoverySnapshot.execution,
+        stale_cutoff_iso: detailedRecoverySnapshot.stale_cutoff_iso
       }
     };
   });
