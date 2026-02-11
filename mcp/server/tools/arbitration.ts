@@ -77,6 +77,19 @@ function readMergeEvidence(server: ToolServerLike, input: Record<string, unknown
   });
 }
 
+function readApprovalChain(input: Record<string, unknown>): Array<Record<string, string>> {
+  if (!Array.isArray(input.approval_chain)) return [];
+  return input.approval_chain
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+    .map((entry) => ({
+      agent_id: typeof entry.agent_id === 'string' ? entry.agent_id : '',
+      decision: typeof entry.decision === 'string' ? entry.decision : '',
+      reason: typeof entry.reason === 'string' ? entry.reason : '',
+      decided_at: typeof entry.decided_at === 'string' ? entry.decided_at : ''
+    }))
+    .filter((entry) => entry.agent_id.length > 0);
+}
+
 export function registerArbitrationTools(server: ToolServerLike): void {
   server.registerTool('team_merge_decide', 'team_merge_decide.schema.json', (input) => {
     const teamId = readString(input, 'team_id');
@@ -103,12 +116,18 @@ export function registerArbitrationTools(server: ToolServerLike): void {
       };
     }
 
+    const proposalId = readString(input, 'proposal_id');
+    const strategy = readString(input, 'strategy');
+    const riskTier = readString(input, 'risk_tier') || null;
+    const approvalRequestedAt = readString(input, 'approval_requested_at') || null;
+    const approvalChain = readApprovalChain(input);
+
     const arbitration = arbitrateMerge({
-      strategy: readString(input, 'strategy'),
+      strategy,
       votes,
       lead_agent_id: leadAgentId || null
     });
-    const proposalId = readString(input, 'proposal_id');
+
     const mergeTarget = readMergeTarget(input);
     const mergeEvidence = readMergeEvidence(server, input);
     const priorEvents = server.store.listEvents(teamId, 500);
@@ -117,7 +136,7 @@ export function registerArbitrationTools(server: ToolServerLike): void {
       merge_target: mergeTarget,
       votes: mergeEvidence,
       arbitration: {
-        strategy: readString(input, 'strategy'),
+        strategy,
         decision: arbitration.decision,
         reason: arbitration.reason,
         stats: arbitration.stats
@@ -136,7 +155,10 @@ export function registerArbitrationTools(server: ToolServerLike): void {
       event_type: 'merge_decision',
       payload: {
         proposal_id: proposalId,
-        strategy: readString(input, 'strategy'),
+        strategy,
+        risk_tier: riskTier,
+        approval_requested_at: approvalRequestedAt,
+        approval_chain: approvalChain,
         arbitration_decision: arbitration.decision,
         arbitration_reason: arbitration.reason,
         decision: coordinator.decision,
@@ -152,7 +174,10 @@ export function registerArbitrationTools(server: ToolServerLike): void {
     return {
       ok: true,
       proposal_id: proposalId,
-      strategy: readString(input, 'strategy'),
+      strategy,
+      risk_tier: riskTier,
+      approval_requested_at: approvalRequestedAt,
+      approval_chain: approvalChain,
       decision: coordinator.decision,
       reason: coordinator.reason,
       stats: arbitration.stats,

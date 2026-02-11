@@ -1,5 +1,5 @@
 import type { ToolServerLike } from './types.js';
-import { evaluateEarlyStop, evaluateIdleTeams } from '../guardrails.js';
+import { evaluateCommandPolicy, evaluateEarlyStop, evaluateIdleTeams } from '../guardrails.js';
 import { evaluateGuardrailMergeGate } from '../../runtime/merge-coordinator.js';
 
 function readString(input: Record<string, unknown>, key: string): string {
@@ -15,6 +15,13 @@ function readNumber(input: Record<string, unknown>, key: string, fallback: numbe
 function readBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const value = input[key];
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function readOptionalString(input: Record<string, unknown>, key: string): string | null {
+  const value = input[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export function registerGuardrailTools(server: ToolServerLike): void {
@@ -54,11 +61,38 @@ export function registerGuardrailTools(server: ToolServerLike): void {
       payload: mergeGate.event_payload
     });
 
+    const proposedCommand = readOptionalString(input, 'proposed_command');
+    const actorRole = readOptionalString(input, 'actor_role') ?? 'unknown';
+    const mode = readOptionalString(input, 'mode') ?? String(team.mode ?? 'default');
+    const commandDecision = proposedCommand
+      ? evaluateCommandPolicy({
+        policy,
+        role: actorRole,
+        mode,
+        command: proposedCommand
+      })
+      : null;
+
+    if (commandDecision && !commandDecision.allowed) {
+      server.store.logEvent({
+        team_id: teamId,
+        event_type: 'security_policy_block',
+        payload: {
+          actor_role: actorRole,
+          mode,
+          command_rule: commandDecision.matched_rule,
+          deny_reason: commandDecision.deny_reason,
+          escalation_policy: commandDecision.escalation_policy
+        }
+      });
+    }
+
     return {
       ok: true,
       compact_messages: compactMessages,
       early_stop: earlyStop,
-      merge_gate: mergeGate.gate
+      merge_gate: mergeGate.gate,
+      command_policy: commandDecision
     };
   });
 

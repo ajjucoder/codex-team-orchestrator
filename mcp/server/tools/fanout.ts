@@ -1,6 +1,6 @@
 import type { ToolServerLike } from './types.js';
 import { recommendFanout } from '../fanout-controller.js';
-import { deriveTokenCostPerAgent } from '../budget-controller.js';
+import { deriveTokenCostPerAgent, optimizeExecutionPlan } from '../budget-controller.js';
 
 type TaskSize = 'small' | 'medium' | 'high';
 
@@ -12,6 +12,11 @@ function readString(input: Record<string, unknown>, key: string): string {
 function readNumber(input: Record<string, unknown>, key: string, fallback: number): number {
   const value = Number(input[key]);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function readBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = input[key];
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 function readTaskSize(input: Record<string, unknown>): TaskSize {
@@ -49,13 +54,30 @@ export function registerFanoutTools(server: ToolServerLike): void {
       token_cost_per_agent: costEstimate.token_cost_per_agent,
       team_max_threads: team.max_threads
     });
+    const optimizer = optimizeExecutionPlan({
+      policy,
+      task_size: taskSize,
+      recommended_threads: recommendation.recommended_threads,
+      estimated_parallel_tasks: readNumber(input, 'estimated_parallel_tasks', 1),
+      token_cost_per_agent: costEstimate.token_cost_per_agent,
+      budget_tokens_remaining: readNumber(input, 'budget_tokens_remaining', 0)
+    });
+    const enforceOptimizer = readBoolean(input, 'enforce_optimizer', false);
+    const optimizedRecommendation = {
+      ...recommendation,
+      recommended_threads: optimizer.optimized_threads
+    };
 
     return {
       ok: true,
       team_id: team.team_id,
       profile: team.profile,
       task_size: taskSize,
-      recommendation,
+      recommendation: enforceOptimizer ? optimizedRecommendation : recommendation,
+      optimizer: {
+        ...optimizer,
+        enforced: enforceOptimizer
+      },
       budget_controller: {
         token_cost_per_agent: costEstimate.token_cost_per_agent,
         source: costEstimate.source,

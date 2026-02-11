@@ -16,6 +16,22 @@
     },
     "strategy": { "type": "string", "enum": ["consensus", "lead", "strict_vote"] },
     "lead_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+    "risk_tier": { "type": "string", "enum": ["P0", "P1", "P2"] },
+    "approval_requested_at": { "type": "string" },
+    "approval_chain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "decision"],
+        "properties": {
+          "agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+          "decision": { "type": "string", "enum": ["approve", "reject"] },
+          "reason": { "type": "string" },
+          "decided_at": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
     "votes": {
       "type": "array",
       "items": {

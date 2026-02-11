@@ -2,6 +2,7 @@ import type { ToolResult, ToolServerLike } from './types.js';
 import { newId } from '../ids.js';
 import { isKnownRole } from '../role-pack.js';
 import { resolvePermissionProfileName } from '../permission-profiles.js';
+import { scanForSecrets } from '../guardrails.js';
 import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
 import type {
   WorkerAdapter,
@@ -37,6 +38,12 @@ interface AgentMembershipResult extends ToolResult {
 interface PayloadValidationResult extends ToolResult {
   ok: boolean;
   error?: string;
+}
+
+interface GuardrailPolicy {
+  guardrails?: {
+    block_secret_leakage?: unknown;
+  };
 }
 
 interface SpawnModelResolution {
@@ -105,6 +112,14 @@ function readOptionalNumber(input: Record<string, unknown>, key: string): number
   return Number.isFinite(value) ? value : null;
 }
 
+function readNumberList(input: Record<string, unknown>, key: string): number[] {
+  const value = input[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
+}
+
 function readBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const value = input[key];
   return typeof value === 'boolean' ? value : fallback;
@@ -138,12 +153,31 @@ function ensureAgentInTeam(agent: AgentRecord, teamId: string, label: string): A
   return { ok: true };
 }
 
-function validateMessagePayload(summary: string, artifactRefs: ArtifactRef[]): PayloadValidationResult {
+function shouldBlockSecretLeakage(policy: GuardrailPolicy | null | undefined): boolean {
+  const guardrails = policy?.guardrails;
+  if (!guardrails || typeof guardrails !== 'object') return true;
+  return guardrails.block_secret_leakage !== false;
+}
+
+function validateMessagePayload(
+  summary: string,
+  artifactRefs: ArtifactRef[],
+  policy: GuardrailPolicy | null | undefined
+): PayloadValidationResult {
   if (summary.length > MAX_SUMMARY_LENGTH) {
     return { ok: false, error: `summary too long: max ${MAX_SUMMARY_LENGTH}` };
   }
   if (artifactRefs.length > MAX_ARTIFACT_REFS) {
     return { ok: false, error: `too many artifact refs: max ${MAX_ARTIFACT_REFS}` };
+  }
+  if (shouldBlockSecretLeakage(policy)) {
+    const secretScan = scanForSecrets(summary);
+    if (secretScan.matched) {
+      return {
+        ok: false,
+        error: `summary contains secret-like content (${secretScan.matched_rule})`
+      };
+    }
   }
   return { ok: true };
 }
@@ -354,7 +388,13 @@ export function registerAgentLifecycleTools(
   const workerAdapter = workerAdapterResolution.adapter;
   const gitManager = resolveGitIsolationManager(server, options);
   const workerSessionByAgentId = new Map<string, WorkerSessionBinding>();
-
+  
+  function listActiveAgentsByTeam(teamId: string): AgentRecord[] {
+    return server
+      .store
+      .listAgentsByTeam(teamId)
+      .filter((agent) => agent.status !== 'offline');
+  }
   server.registerTool('team_spawn', 'team_spawn.schema.json', (input) => {
     if (workerAdapterResolution.invalid_source) {
       return invalidWorkerAdapterFailure(workerAdapterResolution.invalid_source, 'spawn');
@@ -372,7 +412,7 @@ export function registerAgentLifecycleTools(
 
     const team = teamLookup.team;
     const policy = server.policyEngine?.resolveTeamPolicy(team) ?? {};
-    const agentCount = server.store.listAgentsByTeam(teamId).length;
+    const agentCount = listActiveAgentsByTeam(teamId).length;
     if (agentCount >= team.max_threads) {
       return {
         ok: false,
@@ -460,7 +500,7 @@ export function registerAgentLifecycleTools(
     }
 
     const team = teamLookup.team;
-    const existingAgents = server.store.listAgentsByTeam(teamId);
+    const existingAgents = listActiveAgentsByTeam(teamId);
     const capacity = Math.max(0, Number(team.max_threads ?? 0) - existingAgents.length);
     if (capacity === 0) {
       return {
@@ -559,7 +599,8 @@ export function registerAgentLifecycleTools(
       return toMembership;
     }
 
-    const payloadValidation = validateMessagePayload(summary, artifactRefs);
+    const teamPolicy = server.policyEngine?.resolveTeamPolicy(teamLookup.team) as GuardrailPolicy | undefined;
+    const payloadValidation = validateMessagePayload(summary, artifactRefs, teamPolicy ?? null);
     if (!payloadValidation.ok) {
       return payloadValidation;
     }
@@ -751,7 +792,8 @@ export function registerAgentLifecycleTools(
       return fromMembership;
     }
 
-    const payloadValidation = validateMessagePayload(summary, artifactRefs);
+    const teamPolicy = server.policyEngine?.resolveTeamPolicy(teamLookup.team) as GuardrailPolicy | undefined;
+    const payloadValidation = validateMessagePayload(summary, artifactRefs, teamPolicy ?? null);
     if (!payloadValidation.ok) {
       return payloadValidation;
     }
@@ -881,7 +923,12 @@ export function registerAgentLifecycleTools(
     const limit = readOptionalNumber(input, 'limit') ?? 20;
     const messages = server.store.pullInbox(teamId, agentId, limit);
     let acked = 0;
-    if (readBoolean(input, 'ack', true)) {
+    const requestedAckIds = readNumberList(input, 'ack_inbox_ids');
+    if (requestedAckIds.length > 0) {
+      const pulledIds = new Set(messages.map((message) => message.inbox_id));
+      const scopedAckIds = requestedAckIds.filter((id) => pulledIds.has(id));
+      acked = server.store.ackInbox(scopedAckIds);
+    } else if (readBoolean(input, 'ack', true)) {
       acked = server.store.ackInbox(messages.map((message) => message.inbox_id));
     }
 
@@ -932,6 +979,7 @@ export function registerAgentLifecycleTools(
     return {
       ok: true,
       messages: messages.map((msg) => ({
+        inbox_id: msg.inbox_id,
         message_id: msg.message_id,
         from_agent_id: msg.from_agent_id,
         to_agent_id: msg.to_agent_id,

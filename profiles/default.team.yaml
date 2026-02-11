@@ -13,9 +13,54 @@ budgets:
   token_soft_limit: 12000
   token_hard_limit: 20000
   idle_shutdown_ms: 180000
+optimizer:
+  latency_slo_ms: 240000
+  quality_floor: 0.8
+quality:
+  default_risk_tier: P2
+  by_risk_tier:
+    P0:
+      require_tests_before_complete: true
+      require_compliance_ack: true
+      min_artifact_refs: 2
+    P1:
+      require_tests_before_complete: true
+      require_compliance_ack: false
+      min_artifact_refs: 1
+    P2:
+      require_tests_before_complete: false
+      require_compliance_ack: false
+      min_artifact_refs: 0
+approvals:
+  required_approvals: 1
+  timeout_ms: 900000
+  escalation_policy: lead_manual_review
+  by_risk_tier:
+    P0:
+      required_approvals: 2
+      timeout_ms: 600000
+      escalation_policy: security_escalation
+    P1:
+      required_approvals: 1
+      timeout_ms: 900000
+      escalation_policy: lead_manual_review
+    P2:
+      required_approvals: 0
+      timeout_ms: 900000
+      escalation_policy: none
 guardrails:
   compact_messages: true
   early_stop_on_consensus: true
+  block_secret_leakage: true
+  redact_sensitive_inputs: true
+command_policy:
+  default_allow: false
+  block_in_plan_mode: true
+  escalation_policy: lead_manual_review
+  deny_patterns: rm\s+-rf,git\s+reset\s+--hard,curl\s+.*\|\s*sh
+  allow_prefixes:
+    default: git status,git diff,git log,npm run test,npm run typecheck,node --import tsx --test
+    lead: git status,git diff,git log,git add,git commit,git push,npm run test,npm run typecheck,node --import tsx --test
 arbitration:
   default_strategy: lead
 model_routing:

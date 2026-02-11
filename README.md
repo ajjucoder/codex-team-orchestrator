@@ -12,6 +12,13 @@ Production-ready multi-agent orchestration runtime for Codex with:
 
 Use the phrase `use agents team` to activate team-mode orchestration.
 Legacy alias `use agent teams` is also supported.
+Common typo aliases `use agnet teams` and `use agnet team` are also supported.
+
+## Execution Model
+
+- This project provides orchestration contracts, policies, and team-state runtime tools.
+- Actual worker execution is performed by the host coding agent (for example via spawned sub-agents), not by an internal process scheduler in this repo.
+- For safe parallel coding, use per-worker git branch/worktree isolation as defined in `skills/agent-teams/SKILL.md`.
 
 ## Use With Any Coding Agent
 

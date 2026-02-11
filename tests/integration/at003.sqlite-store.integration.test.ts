@@ -81,3 +81,73 @@ test('AT-003 integration: message idempotency and inbox delivery', () => {
 
   store.close();
 });
+
+test('AT-003 integration: idempotency key is scoped by route', () => {
+  const store = new SqliteStore(dbPath);
+  store.migrate();
+
+  const now = new Date().toISOString();
+  store.createTeam({
+    team_id: 'team_route',
+    status: 'active',
+    profile: 'default',
+    objective: 'route idempotency',
+    max_threads: 4,
+    created_at: now,
+    updated_at: now
+  });
+
+  for (const agent_id of ['agent_sender_a', 'agent_sender_b', 'agent_receiver_a', 'agent_receiver_b']) {
+    store.createAgent({
+      agent_id,
+      team_id: 'team_route',
+      role: 'worker',
+      status: 'idle',
+      created_at: now
+    });
+  }
+
+  const a = store.appendMessage({
+    message_id: 'msg_route_a',
+    team_id: 'team_route',
+    from_agent_id: 'agent_sender_a',
+    to_agent_id: 'agent_receiver_a',
+    delivery_mode: 'direct',
+    idempotency_key: 'same-key',
+    payload: { summary: 'a', artifact_refs: [] },
+    created_at: now,
+    recipient_agent_ids: ['agent_receiver_a']
+  });
+  const b = store.appendMessage({
+    message_id: 'msg_route_b',
+    team_id: 'team_route',
+    from_agent_id: 'agent_sender_a',
+    to_agent_id: 'agent_receiver_b',
+    delivery_mode: 'direct',
+    idempotency_key: 'same-key',
+    payload: { summary: 'b', artifact_refs: [] },
+    created_at: now,
+    recipient_agent_ids: ['agent_receiver_b']
+  });
+  const c = store.appendMessage({
+    message_id: 'msg_route_c',
+    team_id: 'team_route',
+    from_agent_id: 'agent_sender_b',
+    to_agent_id: 'agent_receiver_b',
+    delivery_mode: 'direct',
+    idempotency_key: 'same-key',
+    payload: { summary: 'c', artifact_refs: [] },
+    created_at: now,
+    recipient_agent_ids: ['agent_receiver_b']
+  });
+
+  assert.equal(a.inserted, true);
+  assert.equal(b.inserted, true);
+  assert.equal(c.inserted, true);
+  assert.notEqual(a.message.message_id, b.message.message_id);
+  assert.notEqual(b.message.message_id, c.message.message_id);
+  assert.equal(a.message.idempotency_key, 'same-key');
+  assert.equal(b.message.idempotency_key, 'same-key');
+
+  store.close();
+});

@@ -2,6 +2,7 @@ import { validateTool } from './contracts.js';
 import { estimateToolUsage } from './usage-estimator.js';
 import { evaluatePermissionDecision, type PermissionDecision } from './permission-profiles.js';
 import { evaluateModeDecision } from './mode-policy.js';
+import { redactSensitiveValue } from './guardrails.js';
 import type { HookContext, HookDispatchResult, HookEngine } from './hooks.js';
 import type { RunEventRecord } from '../store/entities.js';
 import type { SqliteStore } from '../store/sqlite-store.js';
@@ -102,7 +103,8 @@ function derivePermissionAction(toolName: string, input: ToolInput, context: Too
 
 function resolveActorAgentId(input: ToolInput, context: ToolContext): string | null {
   return pickString(context.auth_agent_id)
-    ?? pickString(input.from_agent_id);
+    ?? pickString(input.from_agent_id)
+    ?? pickString(input.agent_id);
 }
 
 function resolveTeamId(input: ToolInput, context: ToolContext): string | null {
@@ -112,6 +114,7 @@ function resolveTeamId(input: ToolInput, context: ToolContext): string | null {
 function deriveHookEvent(toolName: string, input: ToolInput): string | null {
   if (toolName === 'team_spawn') return 'spawn';
   if (toolName === 'team_task_claim') return 'task_claim';
+  if (toolName === 'team_merge_decide') return 'merge_decide';
   if (toolName === 'team_task_update') {
     const status = pickString(input.status);
     if (status === 'done') return 'task_complete';
@@ -125,7 +128,9 @@ function deriveHookEvent(toolName: string, input: ToolInput): string | null {
 function authorizeContext(input: ToolInput, context: ToolContext): string[] {
   const errors: string[] = [];
   const inputTeamId = pickString(input.team_id) ?? undefined;
-  const inputAgentId = pickString(input.from_agent_id) ?? undefined;
+  const inputAgentId = pickString(input.from_agent_id)
+    ?? pickString(input.agent_id)
+    ?? undefined;
 
   if (context.auth_team_id && inputTeamId && context.auth_team_id !== inputTeamId) {
     errors.push(`forbidden team scope: ${inputTeamId}`);
@@ -399,9 +404,17 @@ export class MCPServer {
       };
 
     const latency_ms = Math.max(0, Date.now() - startedAtMs);
+    const auditInput = redactSensitiveValue({
+      ...input,
+      summary: input.summary,
+      artifact_refs: Array.isArray(input.artifact_refs) ? input.artifact_refs : []
+    }) as Record<string, unknown>;
     const trace = {
       team_id: context.team_id ?? permission.team_id ?? (typeof input.team_id === 'string' ? input.team_id : null),
-      agent_id: context.agent_id ?? permission.actor_agent_id ?? (typeof input.from_agent_id === 'string' ? input.from_agent_id : null),
+      agent_id: context.agent_id
+        ?? permission.actor_agent_id
+        ?? (typeof input.from_agent_id === 'string' ? input.from_agent_id : null)
+        ?? (typeof input.agent_id === 'string' ? input.agent_id : null),
       task_id: context.task_id ?? null,
       message_id: context.message_id ?? null,
       artifact_id: context.artifact_id ?? null
@@ -458,11 +471,7 @@ export class MCPServer {
       ...trace,
       event_type: `tool_call:${name}`,
       payload: {
-        input: {
-          ...input,
-          summary: input.summary,
-          artifact_refs: Array.isArray(input.artifact_refs) ? input.artifact_refs : []
-        },
+        input: auditInput,
         ok: Boolean(result?.ok ?? true),
         permission: {
           allowed: permission.allowed,
@@ -552,6 +561,7 @@ export class MCPServer {
       ...trace,
       event_type: `tool_call:${name}`,
       payload: {
+        input: auditInput,
         ok: Boolean(result?.ok ?? true),
         permission: {
           allowed: permission.allowed,

@@ -3,7 +3,8 @@
   "required": ["team_id"],
   "properties": {
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
-    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "for_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" }
   },
   "additionalProperties": false
 }

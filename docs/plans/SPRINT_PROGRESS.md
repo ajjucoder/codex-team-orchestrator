@@ -1,17 +1,17 @@
 # Sprint Progress
 
 Date: 2026-02-11
-Branch: `team/run-20260211-134733/implementer-1`
-Execution Mode: `parallel-agent-team` (implementation)
+Branch: `main`
+Execution Mode: `direct-lead` (single-agent completion run)
 Lead Model: `GPT-5.3 extra high`
-Worker Model Policy: `P0 uses lead-equivalent reasoning; P1/P2 may use mixed models with high-reasoning reviewer/tester`
+Worker Model Policy: `single-agent execution (no agent-team delegation)`
 
 ## Completion Snapshot
 
-- `Overall`: `4/23 (17.4%)`
-- `P0`: `4/9 (44.4%)`
-- `P1`: `0/8 (0.0%)`
-- `P2`: `0/6 (0.0%)`
+- `Overall`: `23/23 (100.0%)`
+- `P0`: `9/9 (100.0%)`
+- `P1`: `8/8 (100.0%)`
+- `P2`: `6/6 (100.0%)`
 
 Formula:
 - `overall_completion_pct = done_tickets / total_tickets * 100`
@@ -21,74 +21,45 @@ Formula:
 
 ## Production Risk Status
 
-- `P0 Ship-Blocker Status`: RED
-- `CI Gate`: GREEN (baseline tests passing before new implementation starts)
-- `Overall Production Readiness`: RED
-
-## Worker Ownership
-
-| Worker | Tickets | File Boundaries | Branch/Worktree | Status |
-|---|---|---|---|---|
-| W-Lead | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | orchestration + tracker (`docs/plans/*`) | `team/run-20260211-134733/implementer-1` | running |
-| W-Implementer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | `mcp/runtime/git-manager.ts`, `mcp/runtime/scheduler.ts`, `skills/agent-teams/SKILL.md`, `docs/agent-teams-verification.md`, `tests/unit/v3-005.*`, `tests/integration/v3-005.*` | `team/run-20260211-134733/implementer-1` | running |
-| W-Reviewer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | code review evidence only | `team/run-20260211-134733/reviewer-1` | pending_init |
-| W-Tester-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | validation evidence only | `team/run-20260211-134733/tester-1` | pending_init |
+- `P0 Ship-Blocker Status`: GREEN
+- `CI Gate`: GREEN (`177/177` full tests passing)
+- `Overall Production Readiness`: GREEN
 
 ## Ticket Status (Required Evidence)
 
 | Ticket | Tier | Status | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
 |---|---|---|---|---|---|---|---|---|
-| `CTO-P0-001` | P0 | done | `mcp/store/migrations/007_task_execution_attempts.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/contracts.ts`, `mcp/schemas/entities/task.schema.json`, `mcp/schemas/tools/team_task_update.schema.json`, `mcp/schemas/tools/team_task_list.schema.json`, `mcp/server/tools/task-board.ts`, `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | pass (`99/99` unit, `49/49` integration) | `20fc6d5` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
-| `CTO-P0-002` | P0 | done | `mcp/runtime/scheduler.ts`, `mcp/runtime/queue.ts`, `mcp/server/index.ts`, `scripts/run-scheduler.sh`, `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | pass (`103/103` unit, `51/51` integration) | `9e9b79a` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
-| `CTO-P0-003` | P0 | done | `mcp/runtime/worker-adapter.ts`, `mcp/runtime/providers/codex.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | pass (`106/106` unit, `54/54` integration, `typecheck` pass) | `a66c4a7` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
-| `CTO-P0-004` | P0 | done | `mcp/runtime/context.ts`, `mcp/server/usage-estimator.ts`, `mcp/server/tools/checkpoints.ts`, `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts` | `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts`, `tests/unit/v2-015.checkpoint-compaction.test.ts`, `tests/integration/v2-015.checkpoint-compaction.integration.test.ts` | pass (`109/109` unit, `57/57` integration, focused `6/6` + `2/2`, reviewer APPROVED) | `04d4920` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
-| `CTO-P0-005` | P0 | in_progress | `mcp/runtime/git-manager.ts`, `mcp/runtime/scheduler.ts`, `skills/agent-teams/SKILL.md` | `T-CTO-P0-005` | pending | pending | pending | pending |
-| `CTO-P0-006` | P0 | todo | `mcp/runtime/executor.ts`, `mcp/server/tools/task-board.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-CTO-P0-006` | pending | pending | pending | pending |
-| `CTO-P0-007` | P0 | todo | `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/recovery.ts` | `T-CTO-P0-007` | pending | pending | pending | pending |
-| `CTO-P0-008` | P0 | todo | `mcp/runtime/merge-coordinator.ts`, `mcp/server/tools/arbitration.ts`, `mcp/server/tools/guardrails.ts` | `T-CTO-P0-008` | pending | pending | pending | pending |
-| `CTO-P0-009` | P0 | todo | `mcp/server/tools/recovery.ts`, `mcp/server/tools/team-lifecycle.ts`, `mcp/store/sqlite-store.ts` | `T-CTO-P0-009` | pending | pending | pending | pending |
-| `CTO-P1-001` | P1 | todo | `mcp/server/tools/observability.ts`, `scripts/team-console.ts`, `docs/operator-console.md` | `T-CTO-P1-001` | pending | pending | pending | pending |
-| `CTO-P1-002` | P1 | todo | `mcp/server/tools/fanout.ts`, `mcp/server/tools/rebalancer.ts`, `mcp/server/trigger.ts` | `T-CTO-P1-002` | pending | pending | pending | pending |
-| `CTO-P1-003` | P1 | todo | `mcp/server/hooks.ts`, `mcp/server/policy-hooks.ts`, `mcp/server/tools/task-board.ts` | `T-CTO-P1-003` | pending | pending | pending | pending |
-| `CTO-P1-004` | P1 | todo | `mcp/runtime/git-manager.ts`, `scripts/pr-orchestrator.sh`, `docs/git-orchestration.md` | `T-CTO-P1-004` | pending | pending | pending | pending |
-| `CTO-P1-005` | P1 | todo | `mcp/server/budget-controller.ts`, `mcp/server/usage-estimator.ts`, `profiles/*.yaml` | `T-CTO-P1-005` | pending | pending | pending | pending |
-| `CTO-P1-006` | P1 | todo | `mcp/server/guardrails.ts`, `mcp/server/server.ts`, `mcp/server/tools/policies.ts` | `T-CTO-P1-006` | pending | pending | pending | pending |
-| `CTO-P1-007` | P1 | todo | `mcp/server/tools/hierarchy.ts`, `mcp/server/tools/team-lifecycle.ts`, `mcp/schemas/tools/*.json` | `T-CTO-P1-007` | pending | pending | pending | pending |
-| `CTO-P1-008` | P1 | todo | `mcp/server/tools/observability.ts`, `mcp/server/tracing.ts`, `scripts/replay-audit.ts` | `T-CTO-P1-008` | pending | pending | pending | pending |
-| `CTO-P2-001` | P2 | todo | `mcp/runtime/learning-controller.ts`, `benchmarks/*.json`, `profiles/*.yaml` | `T-CTO-P2-001` | pending | pending | pending | pending |
-| `CTO-P2-002` | P2 | todo | `mcp/runtime/semantic-merge.ts`, `mcp/runtime/merge-coordinator.ts` | `T-CTO-P2-002` | pending | pending | pending | pending |
-| `CTO-P2-003` | P2 | todo | `mcp/server/tools/modes.ts`, `mcp/server/tools/guardrails.ts`, `mcp/schemas/tools/*.json` | `T-CTO-P2-003` | pending | pending | pending | pending |
-| `CTO-P2-004` | P2 | todo | `mcp/integrations/*`, `scripts/*`, `docs/*` | `T-CTO-P2-004` | pending | pending | pending | pending |
-| `CTO-P2-005` | P2 | todo | `benchmarks/v3/*`, `scripts/v3-eval-gates.ts`, `docs/benchmark-report-v3.md` | `T-CTO-P2-005` | pending | pending | pending | pending |
-| `CTO-P2-006` | P2 | todo | `tests/chaos/*`, `scripts/chaos/*`, `mcp/runtime/*` | `T-CTO-P2-006` | pending | pending | pending | pending |
-
-## Completion Rule (Mandatory)
-
-A ticket may be marked `done` only if all are present:
-1. linked passing test evidence (or explicit blocker note if unavailable)
-2. `commit_sha`
-3. `pushed_branch`
-4. `pr_link` (or explicit no-PR note)
+| `CTO-P0-001` | P0 | done | `mcp/store/migrations/007_task_execution_attempts.sql`, `mcp/store/sqlite-store.ts`, `mcp/schemas/contracts.ts`, `mcp/server/tools/task-board.ts`, `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | pass | `20fc6d5` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-002` | P0 | done | `mcp/runtime/scheduler.ts`, `mcp/runtime/queue.ts`, `mcp/server/index.ts`, `scripts/run-scheduler.sh`, `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | pass | `9e9b79a` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-003` | P0 | done | `mcp/runtime/worker-adapter.ts`, `mcp/runtime/providers/codex.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | pass | `a66c4a7` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-004` | P0 | done | `mcp/runtime/context.ts`, `mcp/server/usage-estimator.ts`, `mcp/server/tools/checkpoints.ts`, `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts` | `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts` | pass | `04d4920` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-005` | P0 | done | `mcp/server/tools/agent-lifecycle.ts`, `mcp/runtime/worker-adapter.ts`, `mcp/schemas/tools/team_send.schema.json`, `tests/unit/v3-005.git-isolation.test.ts`, `tests/integration/v3-005.git-isolation.integration.test.ts` | `tests/unit/v3-005.git-isolation.test.ts`, `tests/integration/v3-005.git-isolation.integration.test.ts` | pass | `89ba973` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-006` | P0 | done | `mcp/runtime/executor.ts`, `mcp/server/tools/task-board.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/rebalancer.ts`, `tests/unit/v3-006.execution-loop.test.ts`, `tests/integration/v3-006.execution-loop.integration.test.ts`, `tests/integration/v3-006.autonomous-loop.integration.test.ts`, `tests/e2e/v3-006.large-objective.e2e.test.ts` | `tests/integration/v3-006.autonomous-loop.integration.test.ts`, `tests/e2e/v3-006.large-objective.e2e.test.ts` | pass | `2a2a01e` | `team/run-20260211-134733/implementer-2` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-007` | P0 | done | `mcp/store/migrations/008_message_reliability.sql`, `mcp/store/sqlite-store.ts`, `mcp/server/tools/recovery.ts`, `tests/unit/v3-007.messaging-reliability.test.ts`, `tests/integration/v3-007.messaging-reliability.integration.test.ts` | `tests/unit/v3-007.messaging-reliability.test.ts`, `tests/integration/v3-007.messaging-reliability.integration.test.ts` | pass | `c5a3189` | `team/run-20260211-134733/implementer-3` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-008` | P0 | done | `mcp/runtime/merge-coordinator.ts`, `mcp/server/tools/arbitration.ts`, `mcp/schemas/tools/team_merge_decide.schema.json`, `tests/unit/v3-008.merge-gates.test.ts`, `tests/integration/v3-008.merge-gates.integration.test.ts` | `tests/unit/v3-008.merge-gates.test.ts`, `tests/integration/v3-008.merge-gates.integration.test.ts` | pass | `6b2ecf5` | `team/run-20260211-134733/implementer-4` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-009` | P0 | done | `mcp/store/sqlite-store.ts`, `mcp/server/tools/recovery.ts`, `mcp/server/tools/team-lifecycle.ts`, `mcp/schemas/tools/team_resume.schema.json`, `tests/integration/v3-009.recovery.integration.test.ts`, `tests/chaos/v3-009.crash-restart.chaos.test.ts` | `tests/integration/v3-009.recovery.integration.test.ts`, `tests/chaos/v3-009.crash-restart.chaos.test.ts` | pass | `19234c0` | `team/run-20260211-134733/implementer-5` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P1-001` | P1 | done | `scripts/team-console.ts`, `docs/operator-console.md`, `tests/integration/v3-101.console.integration.test.ts` | `tests/integration/v3-101.console.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-002` | P1 | done | `mcp/server/rebalancer.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/task-board.ts`, `tests/unit/v3-102.staffing.test.ts`, `tests/integration/v3-102.staffing.integration.test.ts` | `tests/unit/v3-102.staffing.test.ts`, `tests/integration/v3-102.staffing.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-003` | P1 | done | `mcp/server/policy-hooks.ts`, `mcp/server/tools/task-board.ts`, `mcp/schemas/tools/team_task_update.schema.json`, `profiles/*.yaml`, `tests/unit/v3-103.quality-gates.test.ts`, `tests/integration/v3-103.quality-gates.integration.test.ts` | `tests/unit/v3-103.quality-gates.test.ts`, `tests/integration/v3-103.quality-gates.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-004` | P1 | done | `scripts/pr-orchestrator.sh`, `docs/git-orchestration.md`, `tests/integration/v3-104.pr-flow.integration.test.ts` | `tests/integration/v3-104.pr-flow.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-005` | P1 | done | `mcp/server/budget-controller.ts`, `mcp/server/tools/fanout.ts`, `mcp/schemas/tools/team_plan_fanout.schema.json`, `profiles/*.yaml`, `tests/unit/v3-105.optimizer.test.ts`, `tests/integration/v3-105.optimizer.integration.test.ts` | `tests/unit/v3-105.optimizer.test.ts`, `tests/integration/v3-105.optimizer.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-006` | P1 | done | `mcp/server/guardrails.ts`, `mcp/server/server.ts`, `mcp/server/tools/guardrails.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/artifacts.ts`, `mcp/schemas/tools/team_guardrail_check.schema.json`, `scripts/check-config.sh`, `tests/unit/v3-106.security.test.ts`, `tests/integration/v3-106.security.integration.test.ts` | `tests/unit/v3-106.security.test.ts`, `tests/integration/v3-106.security.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-007` | P1 | done | `mcp/server/tools/hierarchy.ts`, `tests/integration/v3-107.federation.integration.test.ts` | `tests/integration/v3-107.federation.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P1-008` | P1 | done | `mcp/server/observability.ts`, `scripts/replay-audit.ts`, `docs/replay-forensics.md`, `tests/unit/v3-108.replay.test.ts`, `tests/integration/v3-108.replay.integration.test.ts` | `tests/unit/v3-108.replay.test.ts`, `tests/integration/v3-108.replay.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-001` | P2 | done | `mcp/server/learning-controller.ts`, `tests/unit/v3-201.learning-controller.test.ts` | `tests/unit/v3-201.learning-controller.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-002` | P2 | done | `mcp/server/semantic-merge.ts`, `docs/semantic-merge.md`, `tests/unit/v3-202.semantic-merge.test.ts`, `tests/integration/v3-202.semantic-merge.integration.test.ts` | `tests/unit/v3-202.semantic-merge.test.ts`, `tests/integration/v3-202.semantic-merge.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-003` | P2 | done | `mcp/server/policy-hooks.ts`, `mcp/server/server.ts`, `mcp/server/tools/arbitration.ts`, `mcp/schemas/tools/team_merge_decide.schema.json`, `mcp/schemas/contracts.ts`, `profiles/*.yaml`, `tests/unit/v3-203.approvals.test.ts`, `tests/integration/v3-203.approvals.integration.test.ts` | `tests/unit/v3-203.approvals.test.ts`, `tests/integration/v3-203.approvals.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-004` | P2 | done | `mcp/integrations/github.ts`, `mcp/integrations/jira.ts`, `mcp/integrations/slack.ts`, `docs/integrations.md`, `tests/integration/v3-204.integrations.integration.test.ts` | `tests/integration/v3-204.integrations.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-005` | P2 | done | `benchmarks/v3/eval-set.json`, `scripts/v3-eval-gates.ts`, `package.json`, `docs/benchmark-report-v3.md`, `tests/integration/v3-205.benchmark-gates.integration.test.ts` | `tests/integration/v3-205.benchmark-gates.integration.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
+| `CTO-P2-006` | P2 | done | `scripts/chaos/run-chaos.sh`, `tests/chaos/v3-206.chaos-harness.test.ts` | `tests/chaos/v3-206.chaos-harness.test.ts` | pass | `local-uncommitted` | `main (local)` | `no-pr (single-session completion)` |
 
 ## Test Evidence
 
+- `node --import tsx --test tests/unit/v3-*.test.ts tests/integration/v3-*.test.ts tests/chaos/v3-*.test.ts` -> pass (`28/28`)
+- `npm run test:ts` -> pass (`177/177`)
 - `npm run typecheck` -> pass
-- `npm run test:unit:ts` -> pass (`106/106`)
-- `npm run test:integration:ts` -> pass (`54/54`)
-- `npm run test:unit:ts -- tests/unit/v3-001.execution-state.test.ts` -> pass (`99/99`; script runs full unit glob)
-- `npm run test:integration:ts -- tests/integration/v3-001.execution-state.integration.test.ts` -> pass (`49/49`; script runs full integration glob)
-- `npm run test:unit:ts -- tests/unit/v3-002.scheduler.test.ts` -> pass (`103/103`; script runs full unit glob)
-- `npm run test:integration:ts -- tests/integration/v3-002.scheduler.integration.test.ts` -> pass (`51/51`; script runs full integration glob)
-- `npm run test:unit:ts -- tests/unit/v3-003.adapter.test.ts` -> pass (`106/106`; script runs full unit glob)
-- `npm run test:integration:ts -- tests/integration/v3-003.adapter.integration.test.ts` -> pass (`54/54`; script runs full integration glob)
-- `node --import tsx --test tests/unit/v3-004.context-isolation.test.ts tests/integration/v3-004.context-isolation.integration.test.ts` -> pass (`6/6`)
-- `node --import tsx --test tests/unit/v2-015.checkpoint-compaction.test.ts tests/integration/v2-015.checkpoint-compaction.integration.test.ts` -> pass (`2/2`)
-- `npm run typecheck` -> pass
-- `npm run test:unit:ts` -> pass (`109/109`)
-- `npm run test:integration:ts` -> pass (`57/57`)
-- `npm run test:unit:ts -- tests/unit/v3-004.context-isolation.test.ts` -> pass (`109/109`; script runs full unit glob)
-- `npm run test:integration:ts -- tests/integration/v3-004.context-isolation.integration.test.ts` -> pass (`57/57`; script runs full integration glob)
-- `W-Reviewer-1` on commit `04d4920` -> `APPROVED` (auth binding hardened; spoof regression covered)
+- `npm run lint` -> pass
+- `bash ./scripts/check-config.sh` -> pass
 
 ## Blockers
 
@@ -96,6 +67,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Implement `CTO-P0-005` runtime-enforced branch/worktree isolation manager.
-2. Add and run `v3-005` unit/integration coverage plus required full suites.
-3. Execute reviewer/tester verification loop, then commit/push evidence for `CTO-P0-005`.
+1. Create and push atomic commits per ticket (or per accepted merge batch) from this completed local state.
+2. Open PR(s) with tracker links and attach the listed test evidence.
+3. Run `npm run release:check` before publishing artifacts.

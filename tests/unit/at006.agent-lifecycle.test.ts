@@ -142,6 +142,56 @@ test('AT-006 team_send idempotency returns existing message', () => {
   server.store.close();
 });
 
+test('AT-006 team_send idempotency is scoped by route', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  const team = server.callTool('team_start', { objective: 'scoped idempotency' });
+  const teamId = team.team.team_id;
+  const senderA = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const senderB = server.callTool('team_spawn', { team_id: teamId, role: 'planner' });
+  const receiverA = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+  const receiverB = server.callTool('team_spawn', { team_id: teamId, role: 'tester' });
+
+  const first = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderA.agent.agent_id,
+    to_agent_id: receiverA.agent.agent_id,
+    summary: 'route a',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+  const second = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderA.agent.agent_id,
+    to_agent_id: receiverB.agent.agent_id,
+    summary: 'route b',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+  const third = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderB.agent.agent_id,
+    to_agent_id: receiverB.agent.agent_id,
+    summary: 'route c',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(third.ok, true);
+  assert.equal(first.inserted, true);
+  assert.equal(second.inserted, true);
+  assert.equal(third.inserted, true);
+  assert.notEqual(first.message.message_id, second.message.message_id);
+  assert.notEqual(second.message.message_id, third.message.message_id);
+
+  server.store.close();
+});
+
 test('AT-006 team_send suppresses duplicate payloads even with different idempotency keys', () => {
   const server = createServer({ dbPath, logPath });
   server.start();

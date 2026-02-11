@@ -219,6 +219,7 @@ export function registerHierarchyTools(server: ToolServerLike): void {
         cancelled: 0
       }
     };
+    const escalationCandidates: Array<Record<string, unknown>> = [];
 
     const teamSummaries = teams.map((team) => {
       const summary = (server.store.summarizeTeam(team.team_id) ?? {}) as Record<string, unknown>;
@@ -234,6 +235,15 @@ export function registerHierarchyTools(server: ToolServerLike): void {
       totals.tasks.blocked += taskMetrics.blocked;
       totals.tasks.done += taskMetrics.done;
       totals.tasks.cancelled += taskMetrics.cancelled;
+
+      if (team.team_id !== parentTeamId && (taskMetrics.blocked > 0 || team.status !== 'active')) {
+        escalationCandidates.push({
+          team_id: team.team_id,
+          status: team.status,
+          blocked_tasks: taskMetrics.blocked,
+          recommended_action: team.status === 'active' ? 'retry_blocked_tasks' : 'escalate_to_parent'
+        });
+      }
 
       return {
         team_id: team.team_id,
@@ -252,6 +262,7 @@ export function registerHierarchyTools(server: ToolServerLike): void {
       include_parent: includeParent,
       descendant_count: descendants.length,
       totals,
+      escalation_candidates: escalationCandidates,
       teams: teamSummaries
     };
   });

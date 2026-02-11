@@ -212,7 +212,7 @@ export function registerTeamLifecycleTools(server: ToolServerLike): void {
 
     const openTasks = readCount(
       server,
-      "SELECT COUNT(*) as n FROM tasks WHERE team_id = ? AND status != 'done'",
+      "SELECT COUNT(*) as n FROM tasks WHERE team_id = ? AND status IN ('todo', 'blocked', 'in_progress')",
       teamId
     );
     const pendingInbox = readCount(

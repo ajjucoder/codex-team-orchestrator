@@ -24,6 +24,7 @@ done
 node --import tsx --input-type=module -e "
 import { PolicyEngine } from './mcp/server/policy-engine.ts';
 import { validatePermissionConfig } from './mcp/server/permission-profiles.ts';
+import { evaluateCommandPolicy } from './mcp/server/guardrails.ts';
 const engine = new PolicyEngine('profiles');
 for (const p of ['default', 'fast', 'deep']) {
   const loaded = engine.loadProfile(p);
@@ -33,6 +34,24 @@ for (const p of ['default', 'fast', 'deep']) {
   const permissions = validatePermissionConfig(loaded);
   if (!permissions.ok) {
     throw new Error('invalid permissions profile config for ' + p + ': ' + permissions.errors.join('; '));
+  }
+  const blocked = evaluateCommandPolicy({
+    policy: loaded,
+    role: 'implementer',
+    mode: 'plan',
+    command: 'npm test'
+  });
+  if (blocked.allowed) {
+    throw new Error('invalid command policy: plan mode should block execution for ' + p);
+  }
+  const denied = evaluateCommandPolicy({
+    policy: loaded,
+    role: 'implementer',
+    mode: 'default',
+    command: 'rm -rf /tmp/nope'
+  });
+  if (denied.allowed) {
+    throw new Error('invalid command policy: dangerous command allowed for ' + p);
   }
 }
 console.log('check-config:profiles=ok');
