@@ -8,8 +8,8 @@ Worker Model Policy: `P0 uses lead-equivalent reasoning; P1/P2 may use mixed mod
 
 ## Completion Snapshot
 
-- `Overall`: `3/23 (13.0%)`
-- `P0`: `3/9 (33.3%)`
+- `Overall`: `4/23 (17.4%)`
+- `P0`: `4/9 (44.4%)`
 - `P1`: `0/8 (0.0%)`
 - `P2`: `0/6 (0.0%)`
 
@@ -29,10 +29,10 @@ Formula:
 
 | Worker | Tickets | File Boundaries | Branch/Worktree | Status |
 |---|---|---|---|---|
-| W-Lead | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003` | orchestration + tracker (`docs/plans/*`) | `team/run-20260211-134733/implementer-1` | completed |
-| W-Implementer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003` | `mcp/runtime/worker-adapter.ts`, `mcp/runtime/providers/codex.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v3-003.*`, `tests/integration/v3-003.*` | `team/run-20260211-134733/implementer-1` | completed |
-| W-Reviewer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003` | code review evidence only | `team/run-20260211-134733/reviewer-1` | completed |
-| W-Tester-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003` | validation evidence only | `team/run-20260211-134733/tester-1` | completed |
+| W-Lead | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | orchestration + tracker (`docs/plans/*`) | `team/run-20260211-134733/implementer-1` | running |
+| W-Implementer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | `mcp/runtime/git-manager.ts`, `mcp/runtime/scheduler.ts`, `skills/agent-teams/SKILL.md`, `docs/agent-teams-verification.md`, `tests/unit/v3-005.*`, `tests/integration/v3-005.*` | `team/run-20260211-134733/implementer-1` | running |
+| W-Reviewer-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | code review evidence only | `team/run-20260211-134733/reviewer-1` | pending_init |
+| W-Tester-1 | `CTO-P0-001`, `CTO-P0-002`, `CTO-P0-003`, `CTO-P0-004`, `CTO-P0-005` | validation evidence only | `team/run-20260211-134733/tester-1` | pending_init |
 
 ## Ticket Status (Required Evidence)
 
@@ -41,8 +41,8 @@ Formula:
 | `CTO-P0-001` | P0 | done | `mcp/store/migrations/007_task_execution_attempts.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/contracts.ts`, `mcp/schemas/entities/task.schema.json`, `mcp/schemas/tools/team_task_update.schema.json`, `mcp/schemas/tools/team_task_list.schema.json`, `mcp/server/tools/task-board.ts`, `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | pass (`99/99` unit, `49/49` integration) | `20fc6d5` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
 | `CTO-P0-002` | P0 | done | `mcp/runtime/scheduler.ts`, `mcp/runtime/queue.ts`, `mcp/server/index.ts`, `scripts/run-scheduler.sh`, `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | `tests/unit/v3-002.scheduler.test.ts`, `tests/integration/v3-002.scheduler.integration.test.ts` | pass (`103/103` unit, `51/51` integration) | `9e9b79a` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
 | `CTO-P0-003` | P0 | done | `mcp/runtime/worker-adapter.ts`, `mcp/runtime/providers/codex.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | `tests/unit/v3-003.adapter.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | pass (`106/106` unit, `54/54` integration, `typecheck` pass) | `a66c4a7` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
-| `CTO-P0-004` | P0 | todo | `mcp/runtime/context.ts`, `mcp/server/usage-estimator.ts`, `mcp/server/tools/checkpoints.ts` | `T-CTO-P0-004` | pending | pending | pending | pending |
-| `CTO-P0-005` | P0 | todo | `mcp/runtime/git-manager.ts`, `mcp/runtime/scheduler.ts`, `skills/agent-teams/SKILL.md` | `T-CTO-P0-005` | pending | pending | pending | pending |
+| `CTO-P0-004` | P0 | done | `mcp/runtime/context.ts`, `mcp/server/usage-estimator.ts`, `mcp/server/tools/checkpoints.ts`, `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts` | `tests/unit/v3-004.context-isolation.test.ts`, `tests/integration/v3-004.context-isolation.integration.test.ts`, `tests/unit/v2-015.checkpoint-compaction.test.ts`, `tests/integration/v2-015.checkpoint-compaction.integration.test.ts` | pass (`109/109` unit, `57/57` integration, focused `6/6` + `2/2`, reviewer APPROVED) | `04d4920` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
+| `CTO-P0-005` | P0 | in_progress | `mcp/runtime/git-manager.ts`, `mcp/runtime/scheduler.ts`, `skills/agent-teams/SKILL.md` | `T-CTO-P0-005` | pending | pending | pending | pending |
 | `CTO-P0-006` | P0 | todo | `mcp/runtime/executor.ts`, `mcp/server/tools/task-board.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-CTO-P0-006` | pending | pending | pending | pending |
 | `CTO-P0-007` | P0 | todo | `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/recovery.ts` | `T-CTO-P0-007` | pending | pending | pending | pending |
 | `CTO-P0-008` | P0 | todo | `mcp/runtime/merge-coordinator.ts`, `mcp/server/tools/arbitration.ts`, `mcp/server/tools/guardrails.ts` | `T-CTO-P0-008` | pending | pending | pending | pending |
@@ -81,6 +81,14 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v3-002.scheduler.integration.test.ts` -> pass (`51/51`; script runs full integration glob)
 - `npm run test:unit:ts -- tests/unit/v3-003.adapter.test.ts` -> pass (`106/106`; script runs full unit glob)
 - `npm run test:integration:ts -- tests/integration/v3-003.adapter.integration.test.ts` -> pass (`54/54`; script runs full integration glob)
+- `node --import tsx --test tests/unit/v3-004.context-isolation.test.ts tests/integration/v3-004.context-isolation.integration.test.ts` -> pass (`6/6`)
+- `node --import tsx --test tests/unit/v2-015.checkpoint-compaction.test.ts tests/integration/v2-015.checkpoint-compaction.integration.test.ts` -> pass (`2/2`)
+- `npm run typecheck` -> pass
+- `npm run test:unit:ts` -> pass (`109/109`)
+- `npm run test:integration:ts` -> pass (`57/57`)
+- `npm run test:unit:ts -- tests/unit/v3-004.context-isolation.test.ts` -> pass (`109/109`; script runs full unit glob)
+- `npm run test:integration:ts -- tests/integration/v3-004.context-isolation.integration.test.ts` -> pass (`57/57`; script runs full integration glob)
+- `W-Reviewer-1` on commit `04d4920` -> `APPROVED` (auth binding hardened; spoof regression covered)
 
 ## Blockers
 
@@ -88,6 +96,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Move `CTO-P0-004` to `in_progress` and implement per-worker context isolation modules.
-2. Run reviewer/tester loop for `CTO-P0-004` and capture evidence.
-3. Commit/push `CTO-P0-004` with tracker evidence fields populated.
+1. Implement `CTO-P0-005` runtime-enforced branch/worktree isolation manager.
+2. Add and run `v3-005` unit/integration coverage plus required full suites.
+3. Execute reviewer/tester verification loop, then commit/push evidence for `CTO-P0-005`.
