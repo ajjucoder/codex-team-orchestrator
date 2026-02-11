@@ -22,6 +22,11 @@ function readOptionalNumber(input: Record<string, unknown>, key: string): number
   return Number.isFinite(value) ? value : undefined;
 }
 
+function readOptionalBoolean(input: Record<string, unknown>, key: string): boolean | undefined {
+  const value = input[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 function readTaskStatus(input: Record<string, unknown>, key: string): TaskStatus | undefined {
   const value = readOptionalString(input, key);
   if (!value) return undefined;
@@ -30,7 +35,13 @@ function readTaskStatus(input: Record<string, unknown>, key: string): TaskStatus
     value === 'in_progress' ||
     value === 'blocked' ||
     value === 'done' ||
-    value === 'cancelled'
+    value === 'cancelled' ||
+    value === 'queued' ||
+    value === 'dispatching' ||
+    value === 'executing' ||
+    value === 'validating' ||
+    value === 'integrating' ||
+    value === 'failed_terminal'
   ) {
     return value;
   }
@@ -170,12 +181,27 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
   server.registerTool('team_task_claim', 'team_task_claim.schema.json', (input) => {
     const teamId = readString(input, 'team_id');
     const agentId = readString(input, 'agent_id');
+    const taskId = readString(input, 'task_id');
     const guard = ensureTeamAndAgent(server, teamId, agentId);
     if (!guard.ok) return { ok: false, error: guard.error };
+    const task = server.store.getTask(taskId);
+    if (!task || task.team_id !== teamId) {
+      return { ok: false, error: `task not found: ${taskId}` };
+    }
+    const agent = server.store.getAgent(agentId);
+    if (!agent) {
+      return { ok: false, error: `agent not found: ${agentId}` };
+    }
+    if (task.required_role && task.required_role !== agent.role) {
+      return {
+        ok: false,
+        error: `task ${taskId} requires role ${task.required_role}; agent ${agentId} has role ${agent.role}`
+      };
+    }
 
     const claimed = server.store.claimTask({
       team_id: teamId,
-      task_id: readString(input, 'task_id'),
+      task_id: taskId,
       agent_id: agentId,
       expected_lock_version: readOptionalNumber(input, 'expected_lock_version') ?? 0
     });
@@ -209,7 +235,16 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
     const dependencyIds = input.depends_on_task_ids !== undefined
       ? normalizeDependencyIds(input.depends_on_task_ids)
       : null;
+    const qualityChecksPassed = readOptionalBoolean(input, 'quality_checks_passed');
+    const artifactRefsCount = readOptionalNumber(input, 'artifact_refs_count');
+    const complianceAck = readOptionalBoolean(input, 'compliance_ack');
     if (dependencyIds !== null) {
+      if (existing.status === 'in_progress') {
+        return {
+          ok: false,
+          error: `cannot change dependencies while task is in_progress: ${taskId}`
+        };
+      }
       const dependencyValidation = validateDependencies(server, teamId, taskId, dependencyIds);
       if (!dependencyValidation.ok) return dependencyValidation;
     }
@@ -239,8 +274,33 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
       server.store.refreshTaskReadiness(teamId, taskId);
     }
 
+    const updatedTask = updated.task ?? null;
+    if (
+      updatedTask &&
+      (updatedTask.status === 'done' || updatedTask.status === 'blocked' || updatedTask.status === 'failed_terminal')
+    ) {
+      if (updatedTask.claimed_by) {
+        server.store.updateAgentStatus(updatedTask.claimed_by, 'idle');
+      }
+      server.store.logEvent({
+        team_id: teamId,
+        task_id: taskId,
+        agent_id: updatedTask.claimed_by,
+        event_type: 'task_terminal_evidence',
+        payload: {
+          from_status: existing.status,
+          to_status: updatedTask.status,
+          evidence: {
+            quality_checks_passed: qualityChecksPassed ?? null,
+            artifact_refs_count: Number.isFinite(artifactRefsCount) ? artifactRefsCount : null,
+            compliance_ack: complianceAck ?? null
+          }
+        }
+      });
+    }
+
     let promotedTasks: Array<HydratedTask | null> = [];
-    if (existing.status !== 'done' && updated.task?.status === 'done') {
+    if (existing.status !== 'done' && updatedTask?.status === 'done') {
       promotedTasks = server
         .store
         .refreshDependentTasks(teamId, taskId)
@@ -281,17 +341,32 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
     const teamId = readString(input, 'team_id');
     const guard = ensureTeamAndAgent(server, teamId);
     if (!guard.ok) return { ok: false, error: guard.error };
+    const forAgentId = readOptionalString(input, 'for_agent_id');
+    let requiredRole: string | null = null;
+    if (forAgentId) {
+      const agentGuard = ensureTeamAndAgent(server, teamId, forAgentId);
+      if (!agentGuard.ok) return { ok: false, error: agentGuard.error };
+      const agent = server.store.getAgent(forAgentId);
+      if (!agent) {
+        return { ok: false, error: `agent not found: ${forAgentId}` };
+      }
+      requiredRole = agent.role;
+    }
 
     server.store.refreshAllTaskReadiness(teamId);
-    const readyTasks = server
-      .store
-      .listReadyTasks(teamId, readOptionalNumber(input, 'limit') ?? 20)
-      .map((task) => hydrateTask(server, task));
+    const limit = readOptionalNumber(input, 'limit') ?? 20;
+    const readyTasksSource = requiredRole
+      ? server.store.listReadyTasksByRole(teamId, requiredRole, limit)
+      : server.store.listReadyTasks(teamId, limit);
+    const readyTasks = readyTasksSource
+      .map((task) => hydrateTask(server, task))
+      .filter((task): task is HydratedTask => task !== null);
 
     return {
       ok: true,
       team_id: teamId,
       ready_count: readyTasks.length,
+      role_filter: requiredRole,
       tasks: readyTasks
     };
   });

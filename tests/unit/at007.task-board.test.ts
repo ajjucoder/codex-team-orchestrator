@@ -128,6 +128,38 @@ test('AT-007 claim/update enforce optimistic lock version', () => {
   server.store.close();
 });
 
+test('AT-007 claim enforces required_role against claiming agent', () => {
+  const { server, teamId, workerId } = setup();
+  const reviewer = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+
+  const task = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'Review me',
+    required_role: 'reviewer',
+    priority: 1
+  }).task;
+
+  const wrongRoleClaim = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: task.task_id,
+    agent_id: workerId,
+    expected_lock_version: task.lock_version
+  });
+  assert.equal(wrongRoleClaim.ok, false);
+  assert.match(wrongRoleClaim.error, /requires role reviewer/);
+
+  const correctClaim = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: task.task_id,
+    agent_id: reviewer.agent.agent_id,
+    expected_lock_version: task.lock_version
+  });
+  assert.equal(correctClaim.ok, true);
+  assert.equal(correctClaim.task.claimed_by, reviewer.agent.agent_id);
+
+  server.store.close();
+});
+
 test('AT-007 dependency DAG blocks downstream tasks until prerequisites are done', () => {
   const { server, teamId, workerId } = setup();
 
@@ -161,6 +193,12 @@ test('AT-007 dependency DAG blocks downstream tasks until prerequisites are done
   assert.equal(nextBefore.tasks.length, 1);
   assert.equal(nextBefore.tasks[0].task_id, foundation.task_id);
 
+  const nextBeforeByWorker = server.callTool('team_task_next', { team_id: teamId, for_agent_id: workerId });
+  assert.equal(nextBeforeByWorker.ok, true);
+  assert.equal(nextBeforeByWorker.role_filter, 'implementer');
+  assert.equal(nextBeforeByWorker.tasks.length, 1);
+  assert.equal(nextBeforeByWorker.tasks[0].task_id, foundation.task_id);
+
   const done = server.callTool('team_task_update', {
     team_id: teamId,
     task_id: foundation.task_id,
@@ -176,6 +214,40 @@ test('AT-007 dependency DAG blocks downstream tasks until prerequisites are done
   assert.equal(nextAfter.tasks[0].task_id, dependent.task_id);
   assert.equal(nextAfter.tasks[0].status, 'todo');
   assert.equal(nextAfter.tasks[0].unresolved_dependency_count, 0);
+
+  server.store.close();
+});
+
+test('AT-007 dependency updates are blocked while task is in_progress', () => {
+  const { server, teamId, workerId } = setup();
+
+  const blocker = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'blocker',
+    priority: 1
+  }).task;
+  const target = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'target',
+    priority: 2
+  }).task;
+
+  const claimed = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: target.task_id,
+    agent_id: workerId,
+    expected_lock_version: target.lock_version
+  });
+  assert.equal(claimed.ok, true);
+
+  const updateDeps = server.callTool('team_task_update', {
+    team_id: teamId,
+    task_id: target.task_id,
+    expected_lock_version: claimed.task.lock_version,
+    depends_on_task_ids: [blocker.task_id]
+  });
+  assert.equal(updateDeps.ok, false);
+  assert.match(updateDeps.error, /cannot change dependencies while task is in_progress/);
 
   server.store.close();
 });
@@ -241,6 +313,49 @@ test('AT-007 speculative loser cancellation marks non-winning branches as cancel
   assert.equal(queue.ok, true);
   assert.equal(queue.tasks.length, 1);
   assert.equal(queue.tasks[0].task_id, winner.task_id);
+
+  server.store.close();
+});
+
+test('AT-007 team_task_next applies role filter before limit for for_agent_id queries', () => {
+  const { server, teamId, workerId } = setup();
+  const reviewer = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+  assert.equal(reviewer.ok, true);
+
+  const reviewerA = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review-a',
+    priority: 1,
+    required_role: 'reviewer'
+  }).task;
+  const reviewerB = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review-b',
+    priority: 2,
+    required_role: 'reviewer'
+  }).task;
+  const implementerTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'implementer-task',
+    priority: 3,
+    required_role: 'implementer'
+  }).task;
+
+  const globalNext = server.callTool('team_task_next', { team_id: teamId, limit: 2 });
+  assert.equal(globalNext.ok, true);
+  assert.equal(globalNext.tasks.length, 2);
+  assert.equal(globalNext.tasks[0].task_id, reviewerA.task_id);
+  assert.equal(globalNext.tasks[1].task_id, reviewerB.task_id);
+
+  const implementerNext = server.callTool('team_task_next', {
+    team_id: teamId,
+    for_agent_id: workerId,
+    limit: 2
+  });
+  assert.equal(implementerNext.ok, true);
+  assert.equal(implementerNext.role_filter, 'implementer');
+  assert.equal(implementerNext.tasks.length, 1);
+  assert.equal(implementerNext.tasks[0].task_id, implementerTask.task_id);
 
   server.store.close();
 });

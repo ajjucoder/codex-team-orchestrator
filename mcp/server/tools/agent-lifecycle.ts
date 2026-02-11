@@ -2,7 +2,15 @@ import type { ToolResult, ToolServerLike } from './types.js';
 import { newId } from '../ids.js';
 import { isKnownRole } from '../role-pack.js';
 import { resolvePermissionProfileName } from '../permission-profiles.js';
+import { scanForSecrets } from '../guardrails.js';
 import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
+import type {
+  WorkerAdapter,
+  WorkerCollectArtifactsResult,
+  WorkerPollResult,
+  WorkerSendInstructionResult
+} from '../../runtime/worker-adapter.js';
+import { RuntimeGitIsolationManager } from '../../runtime/git-manager.js';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -32,6 +40,12 @@ interface PayloadValidationResult extends ToolResult {
   error?: string;
 }
 
+interface GuardrailPolicy {
+  guardrails?: {
+    block_secret_leakage?: unknown;
+  };
+}
+
 interface SpawnModelResolution {
   model: string | null;
   model_source: string;
@@ -55,6 +69,28 @@ interface DuplicateResponse extends ToolResult {
   recipient_count?: number | null;
 }
 
+interface AgentLifecycleToolOptions {
+  workerAdapter?: WorkerAdapter;
+  gitManager?: RuntimeGitIsolationManager;
+}
+
+interface WorkerSessionBinding {
+  worker_id: string;
+  provider: string;
+}
+
+interface WorkerAdapterResolution {
+  adapter: WorkerAdapter | null;
+  invalid_source: 'options' | 'server' | null;
+}
+
+type WorkerAdapterOperation =
+  | 'spawn'
+  | 'send_instruction'
+  | 'poll'
+  | 'interrupt'
+  | 'collect_artifacts';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -74,6 +110,14 @@ function readOptionalString(input: Record<string, unknown>, key: string): string
 function readOptionalNumber(input: Record<string, unknown>, key: string): number | null {
   const value = Number(input[key]);
   return Number.isFinite(value) ? value : null;
+}
+
+function readNumberList(input: Record<string, unknown>, key: string): number[] {
+  const value = input[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
 }
 
 function readBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
@@ -109,12 +153,31 @@ function ensureAgentInTeam(agent: AgentRecord, teamId: string, label: string): A
   return { ok: true };
 }
 
-function validateMessagePayload(summary: string, artifactRefs: ArtifactRef[]): PayloadValidationResult {
+function shouldBlockSecretLeakage(policy: GuardrailPolicy | null | undefined): boolean {
+  const guardrails = policy?.guardrails;
+  if (!guardrails || typeof guardrails !== 'object') return true;
+  return guardrails.block_secret_leakage !== false;
+}
+
+function validateMessagePayload(
+  summary: string,
+  artifactRefs: ArtifactRef[],
+  policy: GuardrailPolicy | null | undefined
+): PayloadValidationResult {
   if (summary.length > MAX_SUMMARY_LENGTH) {
     return { ok: false, error: `summary too long: max ${MAX_SUMMARY_LENGTH}` };
   }
   if (artifactRefs.length > MAX_ARTIFACT_REFS) {
     return { ok: false, error: `too many artifact refs: max ${MAX_ARTIFACT_REFS}` };
+  }
+  if (shouldBlockSecretLeakage(policy)) {
+    const secretScan = scanForSecrets(summary);
+    if (secretScan.matched) {
+      return {
+        ok: false,
+        error: `summary contains secret-like content (${secretScan.matched_rule})`
+      };
+    }
   }
   return { ok: true };
 }
@@ -231,8 +294,112 @@ function recipientCountExcludingSender(server: ToolServerLike, teamId: string, s
     .length;
 }
 
-export function registerAgentLifecycleTools(server: ToolServerLike): void {
+function isWorkerAdapterCandidate(value: unknown): value is WorkerAdapter {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.spawn === 'function' &&
+    typeof value.sendInstruction === 'function' &&
+    typeof value.poll === 'function' &&
+    typeof value.interrupt === 'function' &&
+    typeof value.collectArtifacts === 'function'
+  );
+}
+
+function resolveWorkerAdapter(server: ToolServerLike, options: AgentLifecycleToolOptions): WorkerAdapterResolution {
+  if (options.workerAdapter !== undefined) {
+    if (isWorkerAdapterCandidate(options.workerAdapter)) {
+      return {
+        adapter: options.workerAdapter,
+        invalid_source: null
+      };
+    }
+    return {
+      adapter: null,
+      invalid_source: 'options'
+    };
+  }
+
+  const fromServer = (server as ToolServerLike & { workerAdapter?: WorkerAdapter }).workerAdapter;
+  if (fromServer === undefined) {
+    return {
+      adapter: null,
+      invalid_source: null
+    };
+  }
+  if (isWorkerAdapterCandidate(fromServer)) {
+    return {
+      adapter: fromServer,
+      invalid_source: null
+    };
+  }
+  return {
+    adapter: null,
+    invalid_source: 'server'
+  };
+}
+
+function resolveGitIsolationManager(server: ToolServerLike, options: AgentLifecycleToolOptions): RuntimeGitIsolationManager {
+  if (options.gitManager) {
+    return options.gitManager;
+  }
+
+  const fromServer = (server as ToolServerLike & { gitManager?: RuntimeGitIsolationManager }).gitManager;
+  if (fromServer) {
+    return fromServer;
+  }
+
+  return new RuntimeGitIsolationManager({
+    store: server.store
+  });
+}
+
+function workerEnvelopeFailure(prefix: string, error: { message?: unknown }): ToolResult {
+  return {
+    ok: false,
+    error: `${prefix}: ${String(error.message ?? 'worker adapter failure')}`,
+    worker_error: error
+  };
+}
+
+function invalidWorkerAdapterFailure(
+  source: 'options' | 'server',
+  operation: WorkerAdapterOperation
+): ToolResult {
+  const workerError = {
+    domain: 'worker_adapter',
+    provider: 'worker_adapter',
+    operation,
+    code: 'INVALID_WORKER_ADAPTER',
+    message: `invalid worker adapter configuration from ${source}`,
+    retryable: false,
+    worker_id: null,
+    details: {
+      source
+    }
+  };
+  return workerEnvelopeFailure('worker adapter configuration invalid', workerError);
+}
+
+export function registerAgentLifecycleTools(
+  server: ToolServerLike,
+  options: AgentLifecycleToolOptions = {}
+): void {
+  const workerAdapterResolution = resolveWorkerAdapter(server, options);
+  const workerAdapter = workerAdapterResolution.adapter;
+  const gitManager = resolveGitIsolationManager(server, options);
+  const workerSessionByAgentId = new Map<string, WorkerSessionBinding>();
+  
+  function listActiveAgentsByTeam(teamId: string): AgentRecord[] {
+    return server
+      .store
+      .listAgentsByTeam(teamId)
+      .filter((agent) => agent.status !== 'offline');
+  }
   server.registerTool('team_spawn', 'team_spawn.schema.json', (input) => {
+    if (workerAdapterResolution.invalid_source) {
+      return invalidWorkerAdapterFailure(workerAdapterResolution.invalid_source, 'spawn');
+    }
+
     const teamId = readString(input, 'team_id');
     const role = readString(input, 'role');
     const teamLookup = getTeamOrError(server, teamId);
@@ -245,7 +412,7 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
 
     const team = teamLookup.team;
     const policy = server.policyEngine?.resolveTeamPolicy(team) ?? {};
-    const agentCount = server.store.listAgentsByTeam(teamId).length;
+    const agentCount = listActiveAgentsByTeam(teamId).length;
     if (agentCount >= team.max_threads) {
       return {
         ok: false,
@@ -261,8 +428,33 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       policy
     });
     const permissionProfile = resolvePermissionProfileName(policy, role);
+    const agentId = newId('agent');
+    let workerSession: WorkerSessionBinding | null = null;
+
+    if (workerAdapter) {
+      const workerSpawn = workerAdapter.spawn({
+        team_id: teamId,
+        agent_id: agentId,
+        role,
+        model: modelAssignment.model,
+        instruction: readOptionalString(input, 'instruction') ?? undefined,
+        metadata: {
+          team_id: teamId,
+          role,
+          permission_profile: permissionProfile
+        }
+      });
+      if (!workerSpawn.ok) {
+        return workerEnvelopeFailure('worker adapter spawn failed', workerSpawn.error);
+      }
+      workerSession = {
+        worker_id: workerSpawn.data.worker_id,
+        provider: workerSpawn.provider
+      };
+    }
+
     const agent = server.store.createAgent({
-      agent_id: newId('agent'),
+      agent_id: agentId,
       team_id: teamId,
       role,
       status: 'idle',
@@ -277,12 +469,23 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       }
     });
     if (!agent) {
+      if (workerAdapter && workerSession) {
+        workerAdapter.interrupt({
+          worker_id: workerSession.worker_id,
+          reason: 'agent_create_failed'
+        });
+      }
       return { ok: false, error: 'failed to create agent' };
+    }
+
+    if (workerSession) {
+      workerSessionByAgentId.set(agent.agent_id, workerSession);
     }
 
     return {
       ok: true,
-      agent
+      agent,
+      worker_session: workerSession
     };
   });
 
@@ -297,7 +500,7 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
     }
 
     const team = teamLookup.team;
-    const existingAgents = server.store.listAgentsByTeam(teamId);
+    const existingAgents = listActiveAgentsByTeam(teamId);
     const capacity = Math.max(0, Number(team.max_threads ?? 0) - existingAgents.length);
     if (capacity === 0) {
       return {
@@ -363,11 +566,16 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
   });
 
   server.registerTool('team_send', 'team_send.schema.json', (input) => {
+    if (workerAdapterResolution.invalid_source) {
+      return invalidWorkerAdapterFailure(workerAdapterResolution.invalid_source, 'send_instruction');
+    }
+
     const teamId = readString(input, 'team_id');
     const fromAgentId = readString(input, 'from_agent_id');
     const toAgentId = readString(input, 'to_agent_id');
     const idempotencyKey = readString(input, 'idempotency_key');
     const summary = String(input.summary ?? '');
+    const requestedCwd = readOptionalString(input, 'cwd');
     const artifactRefs = readArtifactRefs(input);
 
     const teamLookup = getTeamOrError(server, teamId);
@@ -391,7 +599,8 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       return toMembership;
     }
 
-    const payloadValidation = validateMessagePayload(summary, artifactRefs);
+    const teamPolicy = server.policyEngine?.resolveTeamPolicy(teamLookup.team) as GuardrailPolicy | undefined;
+    const payloadValidation = validateMessagePayload(summary, artifactRefs, teamPolicy ?? null);
     if (!payloadValidation.ok) {
       return payloadValidation;
     }
@@ -448,6 +657,35 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       return duplicateResponse(duplicate, 'direct');
     }
 
+    const recipientWorkerSession = workerSessionByAgentId.get(toAgentId);
+    let effectiveWorkerCwd: string | undefined;
+    if (workerAdapter && recipientWorkerSession) {
+      const assignment = gitManager.allocateForAgent({
+        team_id: teamId,
+        agent_id: toAgentId,
+        role: toLookup.agent.role
+      });
+      if (!assignment.ok || !assignment.assignment) {
+        return {
+          ok: false,
+          error: assignment.error ?? `failed to allocate git assignment for worker ${toAgentId}`
+        };
+      }
+
+      effectiveWorkerCwd = requestedCwd ?? assignment.assignment.worktree_path;
+      const guard = gitManager.assertWorkerContext({
+        team_id: teamId,
+        agent_id: toAgentId,
+        cwd: effectiveWorkerCwd
+      });
+      if (!guard.ok) {
+        return {
+          ok: false,
+          error: guard.error ?? 'worker command rejected by git isolation policy'
+        };
+      }
+    }
+
     const createdAt = nowIso();
     const result = server.store.appendMessage({
       message_id: newId('msg'),
@@ -463,7 +701,7 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       created_at: createdAt,
       recipient_agent_ids: [toAgentId]
     });
-    if (deltaApplied) {
+    if (deltaApplied && result.inserted) {
       server.store.logEvent({
         team_id: teamId,
         agent_id: fromAgentId,
@@ -472,6 +710,66 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
         payload: {
           delivery_mode: 'direct',
           artifact_refs_reduced_to: effectiveArtifactRefs.length
+        }
+      });
+    }
+
+    let workerDelivery: WorkerSendInstructionResult | null = null;
+    if (result.inserted) {
+      if (workerAdapter && recipientWorkerSession) {
+        const delivery = workerAdapter.sendInstruction({
+          worker_id: recipientWorkerSession.worker_id,
+          instruction: summary,
+          cwd: effectiveWorkerCwd,
+          idempotency_key: idempotencyKey,
+          artifact_refs: effectiveArtifactRefs,
+          metadata: {
+            team_id: teamId,
+            from_agent_id: fromAgentId,
+            to_agent_id: toAgentId
+          }
+        });
+        if (!delivery.ok) {
+          const rollback = server.store.rollbackMessageInsert(teamId, result.message.message_id);
+          server.store.logEvent({
+            team_id: teamId,
+            agent_id: fromAgentId,
+            message_id: result.message.message_id,
+            event_type: 'worker_instruction_dispatch_rollback',
+            payload: {
+              from_agent_id: fromAgentId,
+              to_agent_id: toAgentId,
+              worker_error: delivery.error,
+              rollback
+            }
+          });
+          const rollbackSuffix = rollback.ok
+            ? `dispatch compensation ${rollback.rolled_back ? 'succeeded' : 'skipped'}`
+            : `dispatch compensation failed: ${String(rollback.error ?? 'unknown rollback error')}`;
+          return {
+            ok: false,
+            error: `worker adapter send failed: ${String(delivery.error.message ?? 'worker adapter failure')} (${rollbackSuffix})`,
+            worker_error: delivery.error,
+            rollback
+          };
+        }
+        workerDelivery = delivery.data;
+      }
+    }
+
+    if (result.inserted) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: toAgentId,
+        message_id: result.message.message_id,
+        event_type: 'worker_instruction_dispatched',
+        payload: {
+          from_agent_id: fromAgentId,
+          to_agent_id: toAgentId,
+          summary_length: summary.length,
+          artifact_refs_count: effectiveArtifactRefs.length,
+          worker_delivery_status: workerDelivery?.status ?? null,
+          worker_instruction_id: workerDelivery?.instruction_id ?? null
         }
       });
     }
@@ -489,7 +787,8 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
         delivery_mode: result.message.delivery_mode,
         idempotency_key: result.message.idempotency_key,
         payload: result.message.payload
-      }
+      },
+      worker_delivery: workerDelivery
     };
   });
 
@@ -514,7 +813,8 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
       return fromMembership;
     }
 
-    const payloadValidation = validateMessagePayload(summary, artifactRefs);
+    const teamPolicy = server.policyEngine?.resolveTeamPolicy(teamLookup.team) as GuardrailPolicy | undefined;
+    const payloadValidation = validateMessagePayload(summary, artifactRefs, teamPolicy ?? null);
     if (!payloadValidation.ok) {
       return payloadValidation;
     }
@@ -622,6 +922,10 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
   });
 
   server.registerTool('team_pull_inbox', 'team_pull_inbox.schema.json', (input) => {
+    if (workerAdapterResolution.invalid_source) {
+      return invalidWorkerAdapterFailure(workerAdapterResolution.invalid_source, 'poll');
+    }
+
     const teamId = readString(input, 'team_id');
     const agentId = readString(input, 'agent_id');
     const teamLookup = getTeamOrError(server, teamId);
@@ -640,13 +944,64 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
     const limit = readOptionalNumber(input, 'limit') ?? 20;
     const messages = server.store.pullInbox(teamId, agentId, limit);
     let acked = 0;
-    if (readBoolean(input, 'ack', true)) {
+    const requestedAckIds = readNumberList(input, 'ack_inbox_ids');
+    if (requestedAckIds.length > 0) {
+      const pulledIds = new Set(messages.map((message) => message.inbox_id));
+      const scopedAckIds = requestedAckIds.filter((id) => pulledIds.has(id));
+      acked = server.store.ackInbox(scopedAckIds);
+    } else if (readBoolean(input, 'ack', true)) {
       acked = server.store.ackInbox(messages.map((message) => message.inbox_id));
+    }
+
+    let workerPoll: WorkerPollResult | null = null;
+    let workerArtifacts: WorkerCollectArtifactsResult['artifacts'] | null = null;
+    const workerErrors: Array<{ message?: unknown }> = [];
+    const workerSession = workerSessionByAgentId.get(agentId);
+    const workerAdapterActive = Boolean(workerAdapter && workerSession);
+    if (workerAdapter && workerSession) {
+      const poll = workerAdapter.poll({
+        worker_id: workerSession.worker_id,
+        limit
+      });
+      if (!poll.ok) {
+        workerErrors.push(poll.error);
+      } else {
+        workerPoll = poll.data;
+      }
+
+      const artifacts = workerAdapter.collectArtifacts({
+        worker_id: workerSession.worker_id,
+        limit: MAX_ARTIFACT_REFS
+      });
+      if (!artifacts.ok) {
+        workerErrors.push(artifacts.error);
+      } else {
+        workerArtifacts = artifacts.data.artifacts;
+      }
+    }
+
+    if (workerPoll || workerArtifacts || workerErrors.length > 0) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: agentId,
+        event_type: 'worker_execution_snapshot',
+        payload: {
+          worker_id: workerSession?.worker_id ?? null,
+          poll_status: workerPoll?.status ?? null,
+          poll_event_count: Array.isArray(workerPoll?.events) ? workerPoll.events.length : 0,
+          artifact_count: Array.isArray(workerArtifacts) ? workerArtifacts.length : 0,
+          artifact_ids: Array.isArray(workerArtifacts)
+            ? workerArtifacts.map((artifact) => String(artifact.artifact_id ?? '')).filter(Boolean)
+            : [],
+          worker_error_count: workerErrors.length
+        }
+      });
     }
 
     return {
       ok: true,
       messages: messages.map((msg) => ({
+        inbox_id: msg.inbox_id,
         message_id: msg.message_id,
         from_agent_id: msg.from_agent_id,
         to_agent_id: msg.to_agent_id,
@@ -655,7 +1010,11 @@ export function registerAgentLifecycleTools(server: ToolServerLike): void {
         payload: msg.payload,
         delivered_at: msg.delivered_at
       })),
-      acked
+      acked,
+      worker_poll: workerPoll,
+      worker_artifacts: workerArtifacts,
+      worker_errors: workerErrors,
+      worker_adapter_active: workerAdapterActive
     };
   });
 }

@@ -22,6 +22,8 @@ interface RebalancePlan {
     ready_tasks: number;
     in_progress_tasks: number;
     estimated_parallel_tasks: number;
+    critical_path_depth: number;
+    dependency_bottlenecks: number;
   };
   budget_controller: {
     token_cost_per_agent: number;
@@ -67,13 +69,72 @@ function activeAgents(agents: AgentRecord[]): AgentRecord[] {
   return agents.filter((agent) => agent.status !== 'offline');
 }
 
+function computeDependencyMetrics(store: SqliteStore, teamId: string): {
+  critical_path_depth: number;
+  dependency_bottlenecks: number;
+} {
+  const tasks = store
+    .listTasks(teamId)
+    .filter((task) => task.status !== 'done' && task.status !== 'cancelled');
+  const taskIds = new Set(tasks.map((task) => task.task_id));
+  const edges = store.listTaskDependencyEdges(teamId)
+    .map((row) => ({
+      task_id: String(row.task_id ?? ''),
+      depends_on_task_id: String(row.depends_on_task_id ?? '')
+    }))
+    .filter((edge) => taskIds.has(edge.task_id) && taskIds.has(edge.depends_on_task_id));
+
+  const deps = new Map<string, string[]>();
+  const dependentsCount = new Map<string, number>();
+  for (const task of tasks) {
+    deps.set(task.task_id, []);
+    dependentsCount.set(task.task_id, 0);
+  }
+  for (const edge of edges) {
+    deps.get(edge.task_id)?.push(edge.depends_on_task_id);
+    dependentsCount.set(
+      edge.depends_on_task_id,
+      (dependentsCount.get(edge.depends_on_task_id) ?? 0) + 1
+    );
+  }
+
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depth = (taskId: string): number => {
+    if (memo.has(taskId)) return memo.get(taskId) ?? 1;
+    if (visiting.has(taskId)) return 1;
+    visiting.add(taskId);
+    const d = 1 + Math.max(
+      0,
+      ...(deps.get(taskId) ?? []).map((depId) => depth(depId))
+    );
+    visiting.delete(taskId);
+    memo.set(taskId, d);
+    return d;
+  };
+
+  const criticalPathDepth = tasks.length > 0
+    ? Math.max(...tasks.map((task) => depth(task.task_id)))
+    : 0;
+  const dependencyBottlenecks = [...dependentsCount.values()].filter((count) => count >= 2).length;
+  return {
+    critical_path_depth: criticalPathDepth,
+    dependency_bottlenecks: dependencyBottlenecks
+  };
+}
+
 export function buildRebalancePlan(input: RebalanceInput): RebalancePlan {
   const { team, store, policy } = input;
   const active = activeAgents(store.listAgentsByTeam(team.team_id));
   const readyTasks = store.listReadyTasks(team.team_id, 1000).length;
   const inProgressTasks = store.listTasks(team.team_id, 'in_progress').length;
+  const dependencyMetrics = computeDependencyMetrics(store, team.team_id);
   const rawEstimated = toNumber(input.estimated_parallel_tasks, Math.max(1, readyTasks + inProgressTasks));
-  const estimatedParallelTasks = clamp(Math.floor(rawEstimated), 1, 6);
+  const estimatedParallelTasks = clamp(
+    Math.floor(Math.max(rawEstimated, dependencyMetrics.critical_path_depth)),
+    1,
+    6
+  );
   const taskSize = input.task_size ?? inferTaskSize(estimatedParallelTasks);
   const budgetTokensRemaining = Math.max(0, Math.floor(toNumber(input.budget_tokens_remaining, 12000)));
 
@@ -108,7 +169,9 @@ export function buildRebalancePlan(input: RebalanceInput): RebalancePlan {
     backlog: {
       ready_tasks: readyTasks,
       in_progress_tasks: inProgressTasks,
-      estimated_parallel_tasks: estimatedParallelTasks
+      estimated_parallel_tasks: estimatedParallelTasks,
+      critical_path_depth: dependencyMetrics.critical_path_depth,
+      dependency_bottlenecks: dependencyMetrics.dependency_bottlenecks
     },
     budget_controller: {
       token_cost_per_agent: tokenCostEstimate.token_cost_per_agent,

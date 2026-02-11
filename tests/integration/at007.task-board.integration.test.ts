@@ -196,3 +196,53 @@ test('AT-007 integration: ready tasks preserve required_role hints for spawn sha
 
   server.store.close();
 });
+
+test('AT-007 integration: role-filtered next-task lookup is not starved by global queue paging', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const team = server.callTool('team_start', { objective: 'role-filter paging', max_threads: 5 });
+  const teamId = team.team.team_id;
+  const implementer = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+
+  const reviewerA = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review top A',
+    priority: 1,
+    required_role: 'reviewer'
+  }).task;
+  const reviewerB = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'review top B',
+    priority: 2,
+    required_role: 'reviewer'
+  }).task;
+  const implementerTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'implement below top page',
+    priority: 3,
+    required_role: 'implementer'
+  }).task;
+
+  const pagedGlobal = server.callTool('team_task_next', { team_id: teamId, limit: 2 });
+  assert.equal(pagedGlobal.ok, true);
+  assert.equal(pagedGlobal.tasks.length, 2);
+  assert.equal(pagedGlobal.tasks[0].task_id, reviewerA.task_id);
+  assert.equal(pagedGlobal.tasks[1].task_id, reviewerB.task_id);
+
+  const implementerNext = server.callTool('team_task_next', {
+    team_id: teamId,
+    for_agent_id: implementer.agent.agent_id,
+    limit: 2
+  });
+  assert.equal(implementerNext.ok, true);
+  assert.equal(implementerNext.tasks.length, 1);
+  assert.equal(implementerNext.tasks[0].task_id, implementerTask.task_id);
+  assert.equal(implementerNext.role_filter, 'implementer');
+
+  server.store.close();
+});

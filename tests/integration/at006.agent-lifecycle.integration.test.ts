@@ -62,11 +62,14 @@ test('AT-006 integration: broadcast + inbox pull/ack works through message bus',
   assert.equal(inboxB.ok, true);
   assert.equal(inboxB.messages.length, 1);
   assert.equal(inboxB.acked, 0);
+  const inboxBId = inboxB.messages[0].inbox_id;
+  assert.equal(typeof inboxBId, 'number');
 
   const inboxBAck = server.callTool('team_pull_inbox', {
     team_id: teamId,
     agent_id: workerB.agent.agent_id,
-    ack: true
+    ack: false,
+    ack_inbox_ids: [inboxBId]
   });
   assert.equal(inboxBAck.messages.length, 1);
   assert.equal(inboxBAck.acked, 1);

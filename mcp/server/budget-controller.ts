@@ -223,3 +223,138 @@ export function deriveTokenCostPerAgent({
     call_multiplier: Number(callMultiplier.toFixed(2))
   };
 }
+
+interface OptimizerPolicyLike {
+  budgets?: {
+    token_soft_limit?: unknown;
+  };
+  optimizer?: {
+    latency_slo_ms?: unknown;
+    quality_floor?: unknown;
+  };
+}
+
+type OptimizerTaskSize = 'small' | 'medium' | 'high';
+
+interface OptimizeExecutionPlanInput {
+  policy?: OptimizerPolicyLike;
+  task_size: OptimizerTaskSize;
+  recommended_threads: number;
+  estimated_parallel_tasks: number;
+  token_cost_per_agent: number;
+  budget_tokens_remaining: number;
+}
+
+interface OptimizeExecutionPlanResult {
+  optimized_threads: number;
+  constraints: {
+    token_budget: number;
+    latency_slo_ms: number;
+    quality_floor: number;
+  };
+  estimates: {
+    total_token_cost: number;
+    latency_ms: number;
+    quality_score: number;
+  };
+  meets_slo: {
+    cost: boolean;
+    latency: boolean;
+    quality: boolean;
+  };
+  reason: string;
+}
+
+function readOptimizerNumber(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function baseLatencyForTaskSize(taskSize: OptimizerTaskSize): number {
+  if (taskSize === 'small') return 90_000;
+  if (taskSize === 'medium') return 180_000;
+  return 300_000;
+}
+
+function estimateLatencyMs(taskSize: OptimizerTaskSize, threads: number): number {
+  const boundedThreads = clamp(Math.floor(threads), 1, 6);
+  return Math.max(5_000, Math.round(baseLatencyForTaskSize(taskSize) / boundedThreads));
+}
+
+function estimateQualityScore(threads: number, estimatedParallelTasks: number): number {
+  const denom = Math.max(1, Math.floor(estimatedParallelTasks));
+  return clamp(threads / denom, 0.2, 1);
+}
+
+export function optimizeExecutionPlan({
+  policy,
+  task_size,
+  recommended_threads,
+  estimated_parallel_tasks,
+  token_cost_per_agent,
+  budget_tokens_remaining
+}: OptimizeExecutionPlanInput): OptimizeExecutionPlanResult {
+  const runtimeTokenBudget = Math.max(0, Math.floor(readOptimizerNumber(budget_tokens_remaining, 0)));
+  const policyTokenSoftLimit = Math.max(
+    0,
+    Math.floor(readOptimizerNumber(policy?.budgets?.token_soft_limit, runtimeTokenBudget))
+  );
+  const tokenBudget = Math.min(policyTokenSoftLimit, runtimeTokenBudget);
+  const latencySloMs = Math.max(
+    1,
+    Math.floor(readOptimizerNumber(policy?.optimizer?.latency_slo_ms, 240_000))
+  );
+  const qualityFloor = clamp(readOptimizerNumber(policy?.optimizer?.quality_floor, 0.75), 0.2, 1);
+  const boundedRecommended = clamp(Math.floor(recommended_threads), 1, 6);
+
+  let bestThreads = boundedRecommended;
+  let bestReason = 'recommended_threads';
+  let bestScore = -Infinity;
+
+  for (let threads = 1; threads <= 6; threads += 1) {
+    const totalTokenCost = Math.round(threads * token_cost_per_agent);
+    const latencyMs = estimateLatencyMs(task_size, threads);
+    const qualityScore = estimateQualityScore(threads, estimated_parallel_tasks);
+    const meetsCost = totalTokenCost <= tokenBudget;
+    const meetsLatency = latencyMs <= latencySloMs;
+    const meetsQuality = qualityScore >= qualityFloor;
+
+    const score = (
+      (meetsCost ? 4 : -3) +
+      (meetsLatency ? 3 : -2) +
+      (meetsQuality ? 5 : -4) +
+      (threads / 10)
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      bestThreads = threads;
+      bestReason = meetsCost && meetsLatency && meetsQuality
+        ? 'meets_all_slo'
+        : 'best_tradeoff_under_constraints';
+    }
+  }
+
+  const finalTokenCost = Math.round(bestThreads * token_cost_per_agent);
+  const finalLatencyMs = estimateLatencyMs(task_size, bestThreads);
+  const finalQuality = estimateQualityScore(bestThreads, estimated_parallel_tasks);
+
+  return {
+    optimized_threads: bestThreads,
+    constraints: {
+      token_budget: tokenBudget,
+      latency_slo_ms: latencySloMs,
+      quality_floor: Number(qualityFloor.toFixed(2))
+    },
+    estimates: {
+      total_token_cost: finalTokenCost,
+      latency_ms: finalLatencyMs,
+      quality_score: Number(finalQuality.toFixed(3))
+    },
+    meets_slo: {
+      cost: finalTokenCost <= tokenBudget,
+      latency: finalLatencyMs <= latencySloMs,
+      quality: finalQuality >= qualityFloor
+    },
+    reason: bestReason
+  };
+}

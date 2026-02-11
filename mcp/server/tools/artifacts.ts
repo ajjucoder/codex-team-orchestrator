@@ -1,5 +1,6 @@
 import type { ToolServerLike } from './types.js';
 import { newId } from '../ids.js';
+import { scanForSecrets } from '../guardrails.js';
 
 const MAX_ARTIFACT_CONTENT_LENGTH = 200000;
 const MAX_ARTIFACT_NAME_LENGTH = 256;
@@ -25,6 +26,15 @@ function readMetadata(input: Record<string, unknown>): Record<string, unknown> {
   const value = input.metadata;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function shouldBlockSecretLeakage(policy: Record<string, unknown> | null | undefined): boolean {
+  const guardrails = (
+    policy?.guardrails && typeof policy.guardrails === 'object'
+      ? policy.guardrails as Record<string, unknown>
+      : {}
+  );
+  return guardrails.block_secret_leakage !== false;
 }
 
 function ensureTeam(server: ToolServerLike, teamId: string): { ok: true } | { ok: false; error: string } {
@@ -54,6 +64,18 @@ export function registerArtifactTools(server: ToolServerLike): void {
       const agent = server.store.getAgent(publishedBy);
       if (!agent || agent.team_id !== teamId) {
         return { ok: false, error: `publisher agent not found in team: ${publishedBy}` };
+      }
+    }
+
+    const policy = server.policyEngine?.resolveTeamPolicy(server.store.getTeam(teamId)) ?? {};
+    if (shouldBlockSecretLeakage(policy)) {
+      const nameSecret = scanForSecrets(name);
+      const contentSecret = scanForSecrets(content);
+      if (nameSecret.matched || contentSecret.matched) {
+        return {
+          ok: false,
+          error: `artifact contains secret-like content (${nameSecret.matched_rule ?? contentSecret.matched_rule ?? 'unknown'})`
+        };
       }
     }
 

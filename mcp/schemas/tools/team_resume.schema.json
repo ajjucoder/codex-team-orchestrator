@@ -2,7 +2,8 @@
   "type": "object",
   "required": ["team_id"],
   "properties": {
-    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" }
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "agent_stale_ms": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }

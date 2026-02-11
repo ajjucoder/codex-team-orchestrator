@@ -3,7 +3,22 @@
   "required": ["team_id"],
   "properties": {
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
-    "status": { "type": "string", "enum": ["todo", "in_progress", "blocked", "done", "cancelled"] }
+    "status": {
+      "type": "string",
+      "enum": [
+        "todo",
+        "in_progress",
+        "blocked",
+        "done",
+        "cancelled",
+        "queued",
+        "dispatching",
+        "executing",
+        "validating",
+        "integrating",
+        "failed_terminal"
+      ]
+    }
   },
   "additionalProperties": false
 }

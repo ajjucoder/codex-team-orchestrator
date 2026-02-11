@@ -1,5 +1,10 @@
 export const REQUIRED_TRIGGER_PHRASE = 'use agents team';
-export const TRIGGER_PHRASE_ALIASES = [REQUIRED_TRIGGER_PHRASE, 'use agent teams'] as const;
+export const TRIGGER_PHRASE_ALIASES = [
+  REQUIRED_TRIGGER_PHRASE,
+  'use agent teams',
+  'use agnet teams',
+  'use agnet team'
+] as const;
 
 type TaskSize = 'small' | 'medium' | 'high';
 

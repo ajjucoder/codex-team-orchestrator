@@ -1,3 +1,16 @@
+export type TaskStatusContract =
+  | 'todo'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'cancelled'
+  | 'queued'
+  | 'dispatching'
+  | 'executing'
+  | 'validating'
+  | 'integrating'
+  | 'failed_terminal';
+
 export interface TeamEntityContract {
   team_id: string;
   parent_team_id?: string | null;
@@ -53,7 +66,7 @@ export interface TaskEntityContract {
   title: string;
   description?: string;
   required_role?: string;
-  status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+  status: TaskStatusContract;
   priority: number;
   claimed_by?: string;
   lock_version?: number;
@@ -110,17 +123,26 @@ export interface ToolInputContracts {
   'team_context_reset.schema.json': { team_id: string; checkpoint_artifact_id?: string; checkpoint_version?: number };
   'team_delegate_task.schema.json': { team_id: string; child_team_id: string; title: string; description?: string; required_role?: string; priority: number };
   'team_finalize.schema.json': { team_id: string; reason?: string };
-  'team_guardrail_check.schema.json': { team_id: string; consensus_reached: boolean; open_tasks: number };
+  'team_guardrail_check.schema.json': { team_id: string; consensus_reached: boolean; open_tasks: number; proposed_command?: string; actor_role?: string; mode?: 'default' | 'delegate' | 'plan' };
   'team_hierarchy_rollup.schema.json': { team_id: string; include_parent?: boolean };
   'team_idle_sweep.schema.json': { now_iso?: string };
-  'team_merge_decide.schema.json': { team_id: string; proposal_id: string; strategy: 'consensus' | 'lead' | 'strict_vote'; votes: Array<{ agent_id: string; decision: 'approve' | 'reject' }>; lead_agent_id?: string };
+  'team_merge_decide.schema.json': {
+    team_id: string;
+    proposal_id: string;
+    strategy: 'consensus' | 'lead' | 'strict_vote';
+    votes: Array<{ agent_id: string; decision: 'approve' | 'reject'; reason?: string }>;
+    lead_agent_id?: string;
+    risk_tier?: 'P0' | 'P1' | 'P2';
+    approval_requested_at?: string;
+    approval_chain?: Array<{ agent_id: string; decision: 'approve' | 'reject'; reason?: string; decided_at?: string }>;
+  };
   'team_mode_get.schema.json': { team_id: string };
   'team_mode_set.schema.json': { team_id: string; mode: 'default' | 'delegate' | 'plan'; reason?: string; ttl_ms?: number; requested_by_agent_id?: string };
   'team_orphan_recover.schema.json': { team_id: string; now_iso?: string; agent_stale_ms?: number };
-  'team_plan_fanout.schema.json': { team_id: string; task_size: 'small' | 'medium' | 'high'; estimated_parallel_tasks: number; budget_tokens_remaining: number; token_cost_per_agent?: number; planned_roles?: string[] };
+  'team_plan_fanout.schema.json': { team_id: string; task_size: 'small' | 'medium' | 'high'; estimated_parallel_tasks: number; budget_tokens_remaining: number; token_cost_per_agent?: number; planned_roles?: string[]; enforce_optimizer?: boolean };
   'team_policy_get.schema.json': { team_id: string };
   'team_policy_set_profile.schema.json': { team_id: string; profile: string };
-  'team_pull_inbox.schema.json': { team_id: string; agent_id: string; limit?: number; ack_inbox_ids?: number[] };
+  'team_pull_inbox.schema.json': { team_id: string; agent_id: string; limit?: number; ack?: boolean; ack_inbox_ids?: number[] };
   'team_replay.schema.json': { team_id: string; limit?: number };
   'team_runtime_rebalance.schema.json': { team_id: string; task_size?: 'small' | 'medium' | 'high'; budget_tokens_remaining?: number; estimated_parallel_tasks?: number; max_scale_up?: number; max_scale_down?: number; allow_busy_scale_down?: boolean };
   'team_resume.schema.json': { team_id: string };
@@ -137,9 +159,9 @@ export interface ToolInputContracts {
   'team_task_lease_acquire.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number; expected_lock_version?: number };
   'team_task_lease_release.schema.json': { team_id: string; task_id: string; agent_id: string };
   'team_task_lease_renew.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number };
-  'team_task_list.schema.json': { team_id: string; status?: string };
-  'team_task_next.schema.json': { team_id: string; limit?: number };
-  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: string; description?: string; priority?: number; required_role?: string; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
+  'team_task_list.schema.json': { team_id: string; status?: TaskStatusContract };
+  'team_task_next.schema.json': { team_id: string; limit?: number; for_agent_id?: string };
+  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: TaskStatusContract; description?: string; priority?: number; required_role?: string; risk_tier?: 'P0' | 'P1' | 'P2'; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
   'team_trigger.schema.json': { prompt: string; profile?: string; task_size?: 'small' | 'medium' | 'high'; max_threads?: number; auto_spawn?: boolean; estimated_parallel_tasks?: number; budget_tokens_remaining?: number; token_cost_per_agent?: number; active_session_model?: string };
 }
 

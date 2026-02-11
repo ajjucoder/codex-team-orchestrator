@@ -6,6 +6,7 @@ import { createServer } from '../../mcp/server/index.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
 import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
 import { registerArtifactTools } from '../../mcp/server/tools/artifacts.js';
+import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 
 const dbPath = '.tmp/at019-unit.sqlite';
 const logPath = '.tmp/at019-unit.log';
@@ -44,6 +45,37 @@ test('AT-019 server enforces team-scoped access by auth context', () => {
 
   assert.equal(forbidden.ok, false);
   assert.match(forbidden.errors.join(' '), /forbidden team scope/);
+
+  server.store.close();
+});
+
+test('AT-019 server enforces agent scope for agent_id based tools', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  const team = server.callTool('team_start', { objective: 'scope check', max_threads: 3 });
+  const lead = server.callTool('team_spawn', { team_id: team.team.team_id, role: 'lead' });
+  const reviewer = server.callTool('team_spawn', { team_id: team.team.team_id, role: 'reviewer' });
+  server.callTool('team_send', {
+    team_id: team.team.team_id,
+    from_agent_id: lead.agent.agent_id,
+    to_agent_id: reviewer.agent.agent_id,
+    summary: 'scope',
+    artifact_refs: [],
+    idempotency_key: 'scope-msg-1'
+  });
+
+  const forbidden = server.callTool('team_pull_inbox', {
+    team_id: team.team.team_id,
+    agent_id: reviewer.agent.agent_id
+  }, {
+    auth_agent_id: lead.agent.agent_id
+  });
+
+  assert.equal(forbidden.ok, false);
+  assert.match(forbidden.errors.join(' '), /forbidden agent scope/);
 
   server.store.close();
 });
@@ -150,6 +182,62 @@ test('AT-019 team_resume restores active state with recovery snapshot', () => {
   assert.equal(resumed.team.status, 'active');
   assert.equal(typeof resumed.recovery_snapshot.open_tasks, 'number');
   assert.equal(typeof resumed.recovery_snapshot.pending_inbox, 'number');
+
+  server.store.close();
+});
+
+test('AT-019 team_resume open_tasks excludes cancelled tasks', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', { objective: 'resume counts', max_threads: 2 });
+  const teamId = started.team.team_id;
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+
+  const doneTask = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'done',
+    priority: 1
+  }).task;
+  server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: doneTask.task_id,
+    agent_id: worker.agent.agent_id,
+    expected_lock_version: doneTask.lock_version
+  });
+  server.callTool('team_task_update', {
+    team_id: teamId,
+    task_id: doneTask.task_id,
+    status: 'done',
+    expected_lock_version: 1
+  });
+
+  const cancelled = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'cancelled',
+    priority: 2
+  }).task;
+  server.callTool('team_task_update', {
+    team_id: teamId,
+    task_id: cancelled.task_id,
+    status: 'cancelled',
+    expected_lock_version: cancelled.lock_version
+  });
+
+  const open = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'open',
+    priority: 3
+  }).task;
+
+  server.callTool('team_finalize', { team_id: teamId, reason: 'simulate_crash' });
+  const resumed = server.callTool('team_resume', { team_id: teamId });
+  assert.equal(resumed.ok, true);
+  assert.equal(resumed.recovery_snapshot.open_tasks, 1);
+  assert.equal(open.status, 'todo');
 
   server.store.close();
 });

@@ -4,7 +4,10 @@
   "properties": {
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "consensus_reached": { "type": "boolean" },
-    "open_tasks": { "type": "integer", "minimum": 0 }
+    "open_tasks": { "type": "integer", "minimum": 0 },
+    "proposed_command": { "type": "string" },
+    "actor_role": { "type": "string" },
+    "mode": { "type": "string", "enum": ["default", "delegate", "plan"] }
   },
   "additionalProperties": false
 }

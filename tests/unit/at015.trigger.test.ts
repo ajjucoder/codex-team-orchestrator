@@ -26,6 +26,7 @@ afterEach(() => {
 test('AT-015 trigger detection is case-insensitive and exact phrase-based', () => {
   assert.equal(hasAgentTeamsTrigger('Please USE AGENTS TEAM for this run'), true);
   assert.equal(hasAgentTeamsTrigger('Please USE AGENT TEAMS for this run'), true);
+  assert.equal(hasAgentTeamsTrigger('Please use AGNET TEAMS for this run'), true);
   assert.equal(hasAgentTeamsTrigger('use teams'), false);
   assert.equal(REQUIRED_TRIGGER_PHRASE, 'use agents team');
 });

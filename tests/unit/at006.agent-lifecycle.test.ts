@@ -5,6 +5,7 @@ import { createServer } from '../../mcp/server/index.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
 import { registerAgentLifecycleTools } from '../../mcp/server/tools/agent-lifecycle.js';
 import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
+import { WorkerAdapter, type WorkerProvider } from '../../mcp/runtime/worker-adapter.js';
 
 const dbPath = '.tmp/at006-unit.sqlite';
 const logPath = '.tmp/at006-unit.log';
@@ -142,6 +143,56 @@ test('AT-006 team_send idempotency returns existing message', () => {
   server.store.close();
 });
 
+test('AT-006 team_send idempotency is scoped by route', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server);
+
+  const team = server.callTool('team_start', { objective: 'scoped idempotency' });
+  const teamId = team.team.team_id;
+  const senderA = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const senderB = server.callTool('team_spawn', { team_id: teamId, role: 'planner' });
+  const receiverA = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+  const receiverB = server.callTool('team_spawn', { team_id: teamId, role: 'tester' });
+
+  const first = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderA.agent.agent_id,
+    to_agent_id: receiverA.agent.agent_id,
+    summary: 'route a',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+  const second = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderA.agent.agent_id,
+    to_agent_id: receiverB.agent.agent_id,
+    summary: 'route b',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+  const third = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: senderB.agent.agent_id,
+    to_agent_id: receiverB.agent.agent_id,
+    summary: 'route c',
+    artifact_refs: [],
+    idempotency_key: 'same-key'
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(third.ok, true);
+  assert.equal(first.inserted, true);
+  assert.equal(second.inserted, true);
+  assert.equal(third.inserted, true);
+  assert.notEqual(first.message.message_id, second.message.message_id);
+  assert.notEqual(second.message.message_id, third.message.message_id);
+
+  server.store.close();
+});
+
 test('AT-006 team_send suppresses duplicate payloads even with different idempotency keys', () => {
   const server = createServer({ dbPath, logPath });
   server.start();
@@ -217,6 +268,104 @@ test('AT-006 team_send sends artifact delta for same summary', () => {
   assert.equal(second.delta_applied, true);
   assert.equal(second.message.payload.artifact_refs.length, 1);
   assert.equal(second.message.payload.artifact_refs[0].artifact_id, 'artifact_b');
+
+  server.store.close();
+});
+
+test('AT-006 team_send rolls back inserted direct message when worker dispatch fails, then retries cleanly', () => {
+  let sendAttempts = 0;
+  const provider: WorkerProvider = {
+    name: 'mock-at006',
+    spawn: (input) => ({
+      worker_id: `worker_${input.agent_id}`,
+      status: 'spawned'
+    }),
+    sendInstruction: () => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        throw {
+          code: 'SEND_DOWN',
+          message: 'dispatch unavailable',
+          retryable: true
+        };
+      }
+      return {
+        accepted: true,
+        instruction_id: 'instruction_retry_ok',
+        status: 'queued'
+      };
+    },
+    poll: (input) => ({
+      worker_id: input.worker_id,
+      status: 'running',
+      events: [{ type: 'heartbeat' }]
+    }),
+    interrupt: () => ({
+      interrupted: true,
+      status: 'interrupted'
+    }),
+    collectArtifacts: (input) => ({
+      worker_id: input.worker_id,
+      artifacts: []
+    })
+  };
+
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerAgentLifecycleTools(server, { workerAdapter: new WorkerAdapter(provider) });
+
+  const team = server.callTool('team_start', { objective: 'rollback dispatch test' });
+  const teamId = team.team.team_id;
+  const sender = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const receiver = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+
+  const failed = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: sender.agent.agent_id,
+    to_agent_id: receiver.agent.agent_id,
+    summary: 'dispatch attempt one',
+    artifact_refs: [],
+    idempotency_key: 'rollback-idem'
+  });
+  assert.equal(failed.ok, false);
+  assert.match(String(failed.error ?? ''), /worker adapter send failed/);
+  assert.equal(Boolean(failed.rollback), true);
+  assert.equal(failed.rollback.ok, true);
+  assert.equal(failed.rollback.rolled_back, true);
+  assert.equal(failed.rollback.deleted_messages, 1);
+
+  const inboxAfterFailure = server.callTool('team_pull_inbox', {
+    team_id: teamId,
+    agent_id: receiver.agent.agent_id,
+    ack: false
+  });
+  assert.equal(inboxAfterFailure.ok, true);
+  assert.equal(inboxAfterFailure.messages.length, 0);
+
+  const retried = server.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: sender.agent.agent_id,
+    to_agent_id: receiver.agent.agent_id,
+    summary: 'dispatch attempt one',
+    artifact_refs: [],
+    idempotency_key: 'rollback-idem'
+  });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.inserted, true);
+
+  const inboxAfterRetry = server.callTool('team_pull_inbox', {
+    team_id: teamId,
+    agent_id: receiver.agent.agent_id,
+    ack: false
+  });
+  assert.equal(inboxAfterRetry.ok, true);
+  assert.equal(inboxAfterRetry.messages.length, 1);
+  assert.equal(inboxAfterRetry.messages[0].message_id, retried.message.message_id);
+
+  const events = server.store.listEvents(teamId, 200);
+  const rollbackEvent = events.find((event) => event.event_type === 'worker_instruction_dispatch_rollback');
+  assert.equal(Boolean(rollbackEvent), true);
 
   server.store.close();
 });

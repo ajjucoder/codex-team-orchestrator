@@ -21,6 +21,7 @@
     "verify": "./scripts/verify.sh",
     "benchmark": "./scripts/benchmark.sh --baseline fixed-6 --candidate adaptive",
     "gates:v2": "node --import tsx ./scripts/v2-eval-gates.ts --report .tmp/v2-release-benchmark-report.json --min-quality 0.95 --max-quality-drop 0 --min-token-reduction 1",
+    "gates:v3": "node --import tsx ./scripts/v3-eval-gates.ts --report .tmp/v3-release-benchmark-report.json --chaos-report .tmp/v3-chaos-report.json --min-quality 0.95 --max-quality-drop 0 --min-token-reduction 1 --max-failed-run-rate 0.1 --max-mttr-ms 120000",
     "release:package": "./scripts/package-release.sh",
     "release:check": "./scripts/release-ready.sh"
   },

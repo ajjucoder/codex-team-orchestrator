@@ -6,6 +6,7 @@
     "from_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "to_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "summary": { "type": "string" },
+    "cwd": { "type": "string" },
     "artifact_refs": {
       "type": "array",
       "items": {

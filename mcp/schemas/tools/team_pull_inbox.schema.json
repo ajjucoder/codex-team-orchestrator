@@ -5,7 +5,12 @@
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
-    "ack": { "type": "boolean" }
+    "ack": { "type": "boolean" },
+    "ack_inbox_ids": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "maxItems": 100
+    }
   },
   "additionalProperties": false
 }

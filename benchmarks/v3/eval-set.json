@@ -1,0 +1,25 @@
+{
+  "name": "v3-public-scorecard",
+  "scenarios": [
+    {
+      "id": "parity-reliable-fanout",
+      "class": "parity",
+      "description": "Baseline orchestration quality/cost/latency comparison"
+    },
+    {
+      "id": "differentiator-risk-gates",
+      "class": "differentiator",
+      "description": "Risk-tier quality and approval gate enforcement"
+    },
+    {
+      "id": "differentiator-replay-forensics",
+      "class": "differentiator",
+      "description": "Deterministic replay digest and forensic timeline stability"
+    },
+    {
+      "id": "differentiator-chaos-recovery",
+      "class": "differentiator",
+      "description": "Failure recovery MTTR and failed-run-rate envelope"
+    }
+  ]
+}

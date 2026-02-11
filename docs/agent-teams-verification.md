@@ -12,6 +12,9 @@ This document captures concrete evidence that agent-team coordination is impleme
 4. Inbox pull + acknowledgement flow works.
 5. Artifact references are exchanged across messages.
 6. Cross-team message attempts are denied.
+7. Runtime-enforced git branch/worktree isolation is allocated per active worker.
+8. Worker execution context checks fail closed outside assigned worktree.
+9. Team completion/abort cleanup removes orphan worker worktrees.
 
 ## Wait/Poll Semantics (Important)
 
@@ -28,6 +31,9 @@ This document captures concrete evidence that agent-team coordination is impleme
 - Inbox persistence and ack:
   - `mcp/store/sqlite-store.ts:638` (`pullInbox`)
   - `mcp/store/sqlite-store.ts:662` (`ackInbox`)
+- Runtime git isolation:
+  - `mcp/runtime/git-manager.ts` (allocation, fail-closed guard, cleanup)
+  - `mcp/runtime/scheduler.ts` (dispatch-time allocation + active/inactive cleanup)
 
 ## Test Evidence
 
@@ -38,6 +44,9 @@ This document captures concrete evidence that agent-team coordination is impleme
   - `tests/integration/at008.artifacts.integration.test.ts`
 - Cross-team isolation:
   - `tests/integration/at019.hardening.integration.test.ts:20`
+- Git isolation and cleanup:
+  - `tests/unit/v3-005.git-isolation.test.ts`
+  - `tests/integration/v3-005.git-isolation.integration.test.ts`
 
 ## Verification Commands
 
@@ -45,6 +54,8 @@ This document captures concrete evidence that agent-team coordination is impleme
 node --import tsx --test tests/integration/at006.agent-lifecycle.integration.test.ts
 node --import tsx --test tests/integration/at008.artifacts.integration.test.ts
 node --import tsx --test tests/integration/at019.hardening.integration.test.ts
+node --import tsx --test tests/unit/v3-005.git-isolation.test.ts
+node --import tsx --test tests/integration/v3-005.git-isolation.integration.test.ts
 npm run test:unit:ts
 npm run test:integration:ts
 ./scripts/check-config.sh
