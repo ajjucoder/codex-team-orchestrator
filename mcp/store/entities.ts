@@ -2,7 +2,20 @@ export type TeamStatus = 'active' | 'idle' | 'paused' | 'finalized' | 'archived'
 export type TeamMode = 'default' | 'delegate' | 'plan';
 export type AgentStatus = 'idle' | 'busy' | 'offline';
 export type DeliveryMode = 'direct' | 'broadcast';
-export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+export type TaskExecutionStatus =
+  | 'queued'
+  | 'dispatching'
+  | 'executing'
+  | 'validating'
+  | 'integrating'
+  | 'failed_terminal';
+export type TaskStatus =
+  | 'todo'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'cancelled'
+  | TaskExecutionStatus;
 
 export interface ArtifactRef {
   artifact_id: string;
@@ -133,6 +146,47 @@ export interface TaskCreateInput {
   lock_version?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface TaskExecutionAttemptRecord {
+  execution_id: string;
+  team_id: string;
+  task_id: string;
+  attempt_no: number;
+  status: TaskStatus;
+  lease_owner_agent_id: string | null;
+  lease_expires_at: string | null;
+  retry_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateExecutionAttemptInput {
+  execution_id: string;
+  team_id: string;
+  task_id: string;
+  attempt_no: number;
+  status: TaskStatus;
+  lease_owner_agent_id?: string | null;
+  lease_expires_at?: string | null;
+  retry_count?: number;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateExecutionAttemptPatch {
+  status?: TaskStatus;
+  lease_owner_agent_id?: string | null;
+  lease_expires_at?: string | null;
+  retry_count?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateExecutionAttemptInput {
+  execution_id: string;
+  patch: UpdateExecutionAttemptPatch;
 }
 
 export interface ClaimTaskInput {

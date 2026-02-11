@@ -1,3 +1,16 @@
+export type TaskStatusContract =
+  | 'todo'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'cancelled'
+  | 'queued'
+  | 'dispatching'
+  | 'executing'
+  | 'validating'
+  | 'integrating'
+  | 'failed_terminal';
+
 export interface TeamEntityContract {
   team_id: string;
   parent_team_id?: string | null;
@@ -53,7 +66,7 @@ export interface TaskEntityContract {
   title: string;
   description?: string;
   required_role?: string;
-  status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+  status: TaskStatusContract;
   priority: number;
   claimed_by?: string;
   lock_version?: number;
@@ -137,9 +150,9 @@ export interface ToolInputContracts {
   'team_task_lease_acquire.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number; expected_lock_version?: number };
   'team_task_lease_release.schema.json': { team_id: string; task_id: string; agent_id: string };
   'team_task_lease_renew.schema.json': { team_id: string; task_id: string; agent_id: string; lease_ms?: number };
-  'team_task_list.schema.json': { team_id: string; status?: string };
+  'team_task_list.schema.json': { team_id: string; status?: TaskStatusContract };
   'team_task_next.schema.json': { team_id: string; limit?: number };
-  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: string; description?: string; priority?: number; required_role?: string; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
+  'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: TaskStatusContract; description?: string; priority?: number; required_role?: string; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
   'team_trigger.schema.json': { prompt: string; profile?: string; task_size?: 'small' | 'medium' | 'high'; max_threads?: number; auto_spawn?: boolean; estimated_parallel_tasks?: number; budget_tokens_remaining?: number; token_cost_per_agent?: number; active_session_model?: string };
 }
 

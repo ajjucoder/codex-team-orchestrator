@@ -30,7 +30,13 @@ function readTaskStatus(input: Record<string, unknown>, key: string): TaskStatus
     value === 'in_progress' ||
     value === 'blocked' ||
     value === 'done' ||
-    value === 'cancelled'
+    value === 'cancelled' ||
+    value === 'queued' ||
+    value === 'dispatching' ||
+    value === 'executing' ||
+    value === 'validating' ||
+    value === 'integrating' ||
+    value === 'failed_terminal'
   ) {
     return value;
   }

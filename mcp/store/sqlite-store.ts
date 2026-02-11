@@ -10,18 +10,21 @@ import type {
   ArtifactRecord,
   ArtifactRef,
   ClaimTaskInput,
+  CreateExecutionAttemptInput,
   InboxRecord,
   MessagePayload,
   MessageRecord,
   PublishArtifactInput,
   RunEventRecord,
   TaskCreateInput,
+  TaskExecutionAttemptRecord,
   TaskRecord,
   TeamCreateInput,
   TeamHierarchyLinkRecord,
   TeamMode,
   TeamRecord,
   TeamStatus,
+  UpdateExecutionAttemptInput,
   UpdateTaskInput,
   UsageSample
 } from './entities.js';
@@ -144,6 +147,28 @@ function normalizeHierarchyDepth(value: unknown): number {
   const depth = Number(value);
   if (!Number.isFinite(depth) || depth < 0) return 0;
   return Math.floor(depth);
+}
+
+function normalizeRetryCount(value: unknown): number {
+  const retryCount = Number(value);
+  if (!Number.isFinite(retryCount) || retryCount < 0) return 0;
+  return Math.floor(retryCount);
+}
+
+function hydrateExecutionAttempt(row: Record<string, unknown>): TaskExecutionAttemptRecord {
+  return {
+    execution_id: String(row.execution_id),
+    team_id: String(row.team_id),
+    task_id: String(row.task_id),
+    attempt_no: Number(row.attempt_no),
+    status: String(row.status) as TaskExecutionAttemptRecord['status'],
+    lease_owner_agent_id: normalizeTeamId(row.lease_owner_agent_id),
+    lease_expires_at: normalizeTeamId(row.lease_expires_at),
+    retry_count: normalizeRetryCount(row.retry_count),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at)
+  };
 }
 
 function payloadEquals(a: Partial<MessagePayload>, b: Partial<MessagePayload>): boolean {
@@ -712,6 +737,91 @@ export class SqliteStore {
     return this.db
       .prepare('SELECT * FROM tasks WHERE team_id = ? ORDER BY priority ASC, created_at ASC')
       .all(teamId) as unknown as TaskRecord[];
+  }
+
+  createExecutionAttempt(attempt: CreateExecutionAttemptInput): TaskExecutionAttemptRecord | null {
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          'INSERT INTO task_execution_attempts(execution_id, team_id, task_id, attempt_no, status, lease_owner_agent_id, lease_expires_at, retry_count, metadata_json, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )
+        .run(
+          attempt.execution_id,
+          attempt.team_id,
+          attempt.task_id,
+          attempt.attempt_no,
+          attempt.status,
+          attempt.lease_owner_agent_id ?? null,
+          attempt.lease_expires_at ?? null,
+          normalizeRetryCount(attempt.retry_count ?? 0),
+          JSON.stringify(attempt.metadata ?? {}),
+          attempt.created_at,
+          attempt.updated_at
+        );
+    });
+    this.touchTeam(attempt.team_id);
+    return this.getExecutionAttempt(attempt.execution_id);
+  }
+
+  getExecutionAttempt(execution_id: string): TaskExecutionAttemptRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM task_execution_attempts WHERE execution_id = ?')
+      .get(execution_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateExecutionAttempt(row);
+  }
+
+  listExecutionAttempts(team_id: string, task_id: string | null = null): TaskExecutionAttemptRecord[] {
+    let rows: Record<string, unknown>[];
+    if (task_id) {
+      rows = this.db
+        .prepare(
+          'SELECT * FROM task_execution_attempts WHERE team_id = ? AND task_id = ? ORDER BY attempt_no ASC, created_at ASC'
+        )
+        .all(team_id, task_id) as Record<string, unknown>[];
+    } else {
+      rows = this.db
+        .prepare('SELECT * FROM task_execution_attempts WHERE team_id = ? ORDER BY created_at ASC, attempt_no ASC')
+        .all(team_id) as Record<string, unknown>[];
+    }
+    return rows.map((row) => hydrateExecutionAttempt(row));
+  }
+
+  updateExecutionAttempt({ execution_id, patch }: UpdateExecutionAttemptInput): TaskExecutionAttemptRecord | null {
+    const current = this.db
+      .prepare('SELECT * FROM task_execution_attempts WHERE execution_id = ?')
+      .get(execution_id) as Record<string, unknown> | undefined;
+    if (!current) return null;
+
+    const nextStatus = patch.status ?? (String(current.status) as TaskExecutionAttemptRecord['status']);
+    const nextLeaseOwner = patch.lease_owner_agent_id !== undefined
+      ? patch.lease_owner_agent_id
+      : normalizeTeamId(current.lease_owner_agent_id);
+    const nextLeaseExpiresAt = patch.lease_expires_at !== undefined
+      ? patch.lease_expires_at
+      : normalizeTeamId(current.lease_expires_at);
+    const nextRetryCount = normalizeRetryCount(patch.retry_count ?? current.retry_count);
+    const nextMetadata = patch.metadata ?? parseJSON<Record<string, unknown>>(current.metadata_json, {});
+    const updatedAt = nowIso();
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          'UPDATE task_execution_attempts SET status = ?, lease_owner_agent_id = ?, lease_expires_at = ?, retry_count = ?, metadata_json = ?, updated_at = ? WHERE execution_id = ?'
+        )
+        .run(
+          nextStatus,
+          nextLeaseOwner,
+          nextLeaseExpiresAt,
+          nextRetryCount,
+          JSON.stringify(nextMetadata),
+          updatedAt,
+          execution_id
+        );
+    });
+
+    this.touchTeam(String(current.team_id));
+    return this.getExecutionAttempt(execution_id);
   }
 
   claimTask({ team_id, task_id, agent_id, expected_lock_version }: ClaimTaskInput): TaskMutationResult {
