@@ -54,6 +54,11 @@ Notes:
 - Agent-team communication and coordination verification:
   - `docs/agent-teams-verification.md`
 
+## Main Branch Consolidation
+
+- CTO consolidation reference for what is now on `main`:
+  - `docs/MAIN_BRANCH_CTO_CONSOLIDATION.md`
+
 ## Quick Start
 
 ```bash

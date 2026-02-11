@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
+    "objective": { "type": "string" },
+    "prompt": { "type": "string" },
+    "task_size": { "type": "string", "enum": ["small", "medium", "high"] },
+    "max_threads": { "type": "integer", "minimum": 1, "maximum": 6 },
+    "estimated_parallel_tasks": { "type": "integer", "minimum": 1, "maximum": 6 },
+    "preferred_threads": { "type": "integer", "minimum": 1, "maximum": 6 }
+  },
+  "additionalProperties": false
+}

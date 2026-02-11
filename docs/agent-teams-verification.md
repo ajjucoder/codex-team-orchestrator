@@ -1,6 +1,6 @@
 # Agent Teams Verification Status
 
-Date: 2026-02-08
+Date: 2026-02-11
 
 This document captures concrete evidence that agent-team coordination is implemented and working.
 
@@ -15,6 +15,9 @@ This document captures concrete evidence that agent-team coordination is impleme
 7. Runtime-enforced git branch/worktree isolation is allocated per active worker.
 8. Worker execution context checks fail closed outside assigned worktree.
 9. Team completion/abort cleanup removes orphan worker worktrees.
+10. Trigger specialization supports static fanout and DAG-ready role shaping.
+11. Operator UI-state surfaces stay coherent across `team_status`, `team_run_summary`, and `team_replay`.
+12. TUI snapshot/control card contract is stable for operator automation (`pause/resume/drain/retry`).
 
 ## Wait/Poll Semantics (Important)
 
@@ -34,6 +37,16 @@ This document captures concrete evidence that agent-team coordination is impleme
 - Runtime git isolation:
   - `mcp/runtime/git-manager.ts` (allocation, fail-closed guard, cleanup)
   - `mcp/runtime/scheduler.ts` (dispatch-time allocation + active/inactive cleanup)
+- Trigger specialization + role-shaped staffing:
+  - `mcp/server/tools/trigger.ts` (`team_trigger`)
+  - `mcp/server/tools/agent-lifecycle.ts` (`team_spawn_ready_roles`)
+- UI-state and replay:
+  - `mcp/server/tools/team-lifecycle.ts` (`team_status`, `team_resume`, `team_finalize`)
+  - `mcp/server/tools/observability.ts` (`team_run_summary`, `team_replay`)
+- Operator UI contract:
+  - `scripts/team-tui.ts` (sidecar snapshot + control command routing)
+  - `scripts/team-card.ts` (chat card renderer for launch/progress/timeout/complete)
+  - `scripts/team-console.ts` (legacy compatibility path)
 
 ## Test Evidence
 
@@ -47,6 +60,13 @@ This document captures concrete evidence that agent-team coordination is impleme
 - Git isolation and cleanup:
   - `tests/unit/v3-005.git-isolation.test.ts`
   - `tests/integration/v3-005.git-isolation.integration.test.ts`
+- Hybrid Agent-Teams UI/TUI MVP evidence:
+  - `tests/unit/v3-109.staffing-planner.test.ts`
+  - `tests/integration/v3-109.staffing.integration.test.ts`
+  - `tests/unit/v3-110.team-ui-state.test.ts`
+  - `tests/integration/v3-110.ui-state.integration.test.ts`
+  - `tests/unit/v3-111.team-card.test.ts`
+  - `tests/integration/v3-111.tui.integration.test.ts`
 
 ## Verification Commands
 
@@ -56,6 +76,12 @@ node --import tsx --test tests/integration/at008.artifacts.integration.test.ts
 node --import tsx --test tests/integration/at019.hardening.integration.test.ts
 node --import tsx --test tests/unit/v3-005.git-isolation.test.ts
 node --import tsx --test tests/integration/v3-005.git-isolation.integration.test.ts
+node --import tsx --test tests/unit/v3-109.staffing-planner.test.ts
+node --import tsx --test tests/integration/v3-109.staffing.integration.test.ts
+node --import tsx --test tests/unit/v3-110.team-ui-state.test.ts
+node --import tsx --test tests/integration/v3-110.ui-state.integration.test.ts
+node --import tsx --test tests/unit/v3-111.team-card.test.ts
+node --import tsx --test tests/integration/v3-111.tui.integration.test.ts
 npm run test:unit:ts
 npm run test:integration:ts
 ./scripts/check-config.sh
@@ -65,6 +91,9 @@ npm run test:integration:ts
 ## Latest Result Snapshot
 
 - `AT-006` integration suite: pass
+- `V3-109` unit/integration suites: pass
+- `V3-110` unit/integration suites: pass
+- `V3-111` unit/integration suites: pass
 - Full unit suite: `95/95` pass
 - Full integration suite: `48/48` pass
 - `check-config`: pass

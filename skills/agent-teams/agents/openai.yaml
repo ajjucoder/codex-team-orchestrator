@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Teams"
+  short_description: "Run multi-agent coding orchestration with worker isolation"
+  default_prompt: "Use $agent-teams to execute this task with parallel workers on the codex-team-orchestrator runtime."
+
+policy:
+  allow_implicit_invocation: true
