@@ -1,15 +1,15 @@
 # Sprint Progress
 
 Date: 2026-02-11
-Branch: `main`
-Execution Mode: `parallel-agent-team` (recommended for implementation; this session was planning-only)
+Branch: `team/run-20260211-134733/implementer-1`
+Execution Mode: `parallel-agent-team` (implementation)
 Lead Model: `GPT-5.3 extra high`
 Worker Model Policy: `P0 uses lead-equivalent reasoning; P1/P2 may use mixed models with high-reasoning reviewer/tester`
 
 ## Completion Snapshot
 
-- `Overall`: `0/23 (0.0%)`
-- `P0`: `0/9 (0.0%)`
+- `Overall`: `1/23 (4.3%)`
+- `P0`: `1/9 (11.1%)`
 - `P1`: `0/8 (0.0%)`
 - `P2`: `0/6 (0.0%)`
 
@@ -29,13 +29,16 @@ Formula:
 
 | Worker | Tickets | File Boundaries | Branch/Worktree | Status |
 |---|---|---|---|---|
-| W-Lead | `CTO-P0-001..CTO-P2-006` | `docs/plans/*` (planning session) | `main` | completed |
+| W-Lead | `CTO-P0-001` | orchestration + tracker (`docs/plans/*`) | `team/run-20260211-134733/implementer-1` | completed |
+| W-Implementer-1 | `CTO-P0-001` | `mcp/store/*`, `mcp/server/contracts.ts`, `mcp/schemas/*`, `tests/unit/v3-001.*`, `tests/integration/v3-001.*` | `team/run-20260211-134733/implementer-1` | completed |
+| W-Reviewer-1 | `CTO-P0-001` | code review evidence only | `team/run-20260211-134733/reviewer-1` | completed |
+| W-Tester-1 | `CTO-P0-001` | validation evidence only | `team/run-20260211-134733/tester-1` | completed |
 
 ## Ticket Status (Required Evidence)
 
 | Ticket | Tier | Status | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
 |---|---|---|---|---|---|---|---|---|
-| `CTO-P0-001` | P0 | todo | `mcp/store/migrations/*`, `mcp/store/sqlite-store.ts`, `mcp/server/contracts.ts`, `mcp/schemas/*` | `T-CTO-P0-001` | pending | pending | pending | pending |
+| `CTO-P0-001` | P0 | done | `mcp/store/migrations/007_task_execution_attempts.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/contracts.ts`, `mcp/schemas/entities/task.schema.json`, `mcp/schemas/tools/team_task_update.schema.json`, `mcp/schemas/tools/team_task_list.schema.json`, `mcp/server/tools/task-board.ts`, `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | `tests/unit/v3-001.execution-state.test.ts`, `tests/integration/v3-001.execution-state.integration.test.ts` | pass (`99/99` unit, `49/49` integration) | `20fc6d5` | `team/run-20260211-134733/implementer-1` | `no-pr (branch pushed; PR deferred)` |
 | `CTO-P0-002` | P0 | todo | `mcp/runtime/scheduler.ts`, `mcp/runtime/queue.ts`, `mcp/server/index.ts`, `scripts/run-scheduler.sh` | `T-CTO-P0-002` | pending | pending | pending | pending |
 | `CTO-P0-003` | P0 | todo | `mcp/runtime/worker-adapter.ts`, `mcp/runtime/providers/codex.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-CTO-P0-003` | pending | pending | pending | pending |
 | `CTO-P0-004` | P0 | todo | `mcp/runtime/context.ts`, `mcp/server/usage-estimator.ts`, `mcp/server/tools/checkpoints.ts` | `T-CTO-P0-004` | pending | pending | pending | pending |
@@ -69,16 +72,17 @@ A ticket may be marked `done` only if all are present:
 
 ## Test Evidence
 
-- `npm run test:unit:ts` -> pass (`100/100`)
+- `npm run test:unit:ts` -> pass (`99/99`)
 - `npm run test:integration:ts` -> pass (`49/49`)
+- `npm run test:unit:ts -- tests/unit/v3-001.execution-state.test.ts` -> pass (`99/99`; script runs full unit glob)
+- `npm run test:integration:ts -- tests/integration/v3-001.execution-state.integration.test.ts` -> pass (`49/49`; script runs full integration glob)
 
 ## Blockers
 
-- None for planning.
-- Execution blocker tracked by tickets: autonomous worker service not implemented yet (`CTO-P0-002`, `CTO-P0-006`).
+- None.
 
 ## Next Actions
 
-1. Start execution with `CTO-P0-001` and `CTO-P0-002` in strict order.
-2. Move active P0 rows to `in_progress` when execution starts.
-3. Record `commit_sha`, `pushed_branch`, and `pr_link` for each completed ticket.
+1. Move `CTO-P0-002` to `in_progress` and implement persistent scheduler service files.
+2. Run reviewer/tester loop for `CTO-P0-002` and capture evidence.
+3. Commit/push `CTO-P0-002` with tracker evidence fields populated.
