@@ -8,17 +8,22 @@ import { registerArtifactTools } from '../../mcp/server/tools/artifacts.js';
 import { registerTaskBoardTools } from '../../mcp/server/tools/task-board.js';
 import { registerTeamLifecycleTools } from '../../mcp/server/tools/team-lifecycle.js';
 
-const dbPath = '.tmp/v3-006-int.sqlite';
-const logPath = '.tmp/v3-006-int.log';
+const cleanupTargets: Array<{ dbPath: string; logPath: string }> = [];
 
 afterEach(() => {
-  rmSync(dbPath, { force: true });
-  rmSync(`${dbPath}-wal`, { force: true });
-  rmSync(`${dbPath}-shm`, { force: true });
-  rmSync(logPath, { force: true });
+  for (const target of cleanupTargets.splice(0)) {
+    rmSync(target.dbPath, { force: true });
+    rmSync(`${target.dbPath}-wal`, { force: true });
+    rmSync(`${target.dbPath}-shm`, { force: true });
+    rmSync(target.logPath, { force: true });
+  }
 });
 
-function bootstrapServer() {
+function bootstrapServer(suffix: string) {
+  const nonce = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  const dbPath = `.tmp/v3-006-int-${suffix}-${nonce}.sqlite`;
+  const logPath = `.tmp/v3-006-int-${suffix}-${nonce}.log`;
+  cleanupTargets.push({ dbPath, logPath });
   const server = createServer({ dbPath, logPath });
   server.start();
   registerTeamLifecycleTools(server);
@@ -29,7 +34,7 @@ function bootstrapServer() {
 }
 
 test('V3-006 integration: executor loop auto-completes a claimed task with artifact evidence', () => {
-  const server = bootstrapServer();
+  const server = bootstrapServer('complete');
 
   const started = server.callTool('team_start', {
     objective: 'v3-006 autonomous loop completion',
@@ -102,7 +107,7 @@ test('V3-006 integration: executor loop auto-completes a claimed task with artif
 });
 
 test('V3-006 integration: executor blocks when no supervising lead is available', () => {
-  const server = bootstrapServer();
+  const server = bootstrapServer('blocked');
 
   const started = server.callTool('team_start', {
     objective: 'v3-006 autonomous loop blocked path',
