@@ -544,6 +544,77 @@ test('V3-006 unit: terminal success requires evidence signal before marking task
   server.store.close();
 });
 
+test('V3-006 unit: missing poll with no adapter follows legacy terminal completion path', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerArtifactTools(server);
+  registerAgentLifecycleTools(server);
+  registerTaskBoardTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'v3-006 no-adapter legacy path',
+    profile: 'default',
+    max_threads: 3
+  });
+  assert.equal(started.ok, true);
+  const teamId = String(started.team.team_id);
+
+  const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+  const worker = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+  assert.equal(lead.ok, true);
+  assert.equal(worker.ok, true);
+  const workerId = String(worker.agent.agent_id);
+
+  const created = server.callTool('team_task_create', {
+    team_id: teamId,
+    title: 'legacy completion',
+    required_role: 'implementer',
+    priority: 1
+  });
+  const taskId = String(created.task.task_id);
+
+  const claimed = server.callTool('team_task_claim', {
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    expected_lock_version: Number(created.task.lock_version)
+  });
+  assert.equal(claimed.ok, true);
+
+  const scheduler = makeStaticScheduler([{
+    team_id: teamId,
+    task_id: taskId,
+    agent_id: workerId,
+    required_role: 'implementer',
+    priority: 1,
+    git_branch: 'team/run-test/implementer-1',
+    git_worktree_path: '/tmp/run-test/implementer-1'
+  }]);
+  const executor = new RuntimeExecutor({ server, scheduler });
+
+  const run = executor.runOnce(teamId);
+  assert.equal(run.ok, true);
+  assert.equal(run.tasks_completed, 1);
+  assert.equal(run.tasks_blocked, 0);
+  assert.equal(run.tasks_skipped, 0);
+  assert.equal(run.task_results[0]?.final_status, 'done');
+  assert.equal(
+    run.task_results[0]?.events.some((event) =>
+      event.stage === 'validate' &&
+      event.status === 'succeeded' &&
+      /legacy inbox path/.test(String(event.detail ?? ''))
+    ),
+    true
+  );
+
+  const task = server.store.getTask(taskId);
+  assert.equal(task?.status, 'done');
+  assert.match(String(task?.description ?? ''), /executor evidence: artifact_task_/);
+
+  server.store.close();
+});
+
 test('V3-006 unit: executeAllInProgress processes claimed tasks even when scheduler dispatches none', () => {
   const server = createServer({ dbPath, logPath });
   server.start();

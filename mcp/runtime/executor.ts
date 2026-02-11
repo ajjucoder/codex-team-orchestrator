@@ -347,6 +347,7 @@ export class RuntimeExecutor {
     const workerErrors = Array.isArray(inbox.worker_errors)
       ? inbox.worker_errors
       : [];
+    const workerAdapterActive = inbox.worker_adapter_active === true;
     const workerPoll = isRecord(inbox.worker_poll)
       ? inbox.worker_poll
       : null;
@@ -365,10 +366,16 @@ export class RuntimeExecutor {
       qualityChecksPassed = false;
       complianceAck = false;
     } else if (!workerPoll) {
-      validationOutcome = 'skipped';
-      validationDetail = 'worker poll unavailable; validation deferred';
-      qualityChecksPassed = false;
-      complianceAck = false;
+      if (!workerAdapterActive) {
+        // Legacy non-adapter flow has no poll channel; preserve terminal progress semantics.
+        validationOutcome = 'passed';
+        validationDetail = 'worker poll unavailable; no adapter active (legacy inbox path)';
+      } else {
+        validationOutcome = 'blocked';
+        validationDetail = 'worker poll unavailable from active adapter';
+        qualityChecksPassed = false;
+        complianceAck = false;
+      }
     } else {
       const statusClass = classifyWorkerStatus(workerPoll.status);
       if (statusClass === 'non_terminal') {

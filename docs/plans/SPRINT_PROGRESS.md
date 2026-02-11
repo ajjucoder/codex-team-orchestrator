@@ -68,6 +68,7 @@ Formula:
 
 - `npm run test:unit:ts -- tests/unit/v3-203.approvals.test.ts` -> pass (`155/155` unit tests pass; targeted approval tests included)
 - `npm run test:integration:ts -- tests/integration/v3-003.adapter.integration.test.ts` -> pass (`85/85` integration tests pass; targeted remediation integrations included)
+- `node --import tsx --test tests/unit/v3-006.execution-loop.test.ts tests/integration/v3-006.autonomous-loop.integration.test.ts tests/e2e/v3-006.large-objective.e2e.test.ts` -> pass (`11/11`)
 - `npm run typecheck` -> pass
 
 ## Blockers
