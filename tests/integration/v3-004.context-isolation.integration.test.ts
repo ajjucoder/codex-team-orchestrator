@@ -244,6 +244,34 @@ test('V3-004 integration: worker scope rejects spoofed worker_id and missing aut
   assert.equal(missingAuth.ok, false);
   assert.match(String(missingAuth.error ?? ''), /require authenticated agent context/);
 
+  const agentIdOnlyCompact = server.callTool(
+    'team_checkpoint_compact',
+    {
+      team_id: teamId,
+      keep_recent_messages: 1,
+      keep_recent_events: 10
+    },
+    {
+      worker_id: workerA.agent.agent_id,
+      agent_id: workerA.agent.agent_id
+    }
+  );
+  assert.equal(agentIdOnlyCompact.ok, false);
+  assert.match(String(agentIdOnlyCompact.error ?? ''), /require authenticated agent context/);
+
+  const agentIdOnlyReset = server.callTool(
+    'team_context_reset',
+    {
+      team_id: teamId
+    },
+    {
+      worker_id: workerA.agent.agent_id,
+      agent_id: workerA.agent.agent_id
+    }
+  );
+  assert.equal(agentIdOnlyReset.ok, false);
+  assert.match(String(agentIdOnlyReset.error ?? ''), /require authenticated agent context/);
+
   server.store.close();
 });
 

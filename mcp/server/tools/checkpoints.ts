@@ -65,7 +65,7 @@ function charsToTokens(totalChars: unknown): number {
 }
 
 function readAuthenticatedAgentId(context: Record<string, unknown>): string | null {
-  return readOptionalString(context, 'auth_agent_id') ?? readOptionalString(context, 'agent_id');
+  return readOptionalString(context, 'auth_agent_id');
 }
 
 function resolveStreamScope(input: Record<string, unknown>, context: Record<string, unknown>): StreamScopeResolution {
