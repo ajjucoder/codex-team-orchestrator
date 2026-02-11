@@ -25,6 +25,11 @@ Operational defaults:
 - Message bus uses compact summaries and artifact references by default.
 - Hard cap: `max_threads=6`.
 
+Runtime isolation defaults (v3-005):
+- Scheduler allocates a unique branch + worktree binding per active worker assignment.
+- Worker execution is fail-closed outside its assigned worktree path.
+- Finalized/aborted teams trigger assignment cleanup to prevent orphan worktrees.
+
 Execution status protocol (required):
 - Maintain a local worker-state table for every spawned worker: `pending_init|running|completed|failed`.
 - Poll workers with longer wait windows (`>=120000ms`) to reduce noisy empty polls.

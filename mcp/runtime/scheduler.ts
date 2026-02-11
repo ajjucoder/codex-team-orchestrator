@@ -1,6 +1,7 @@
 import type { AgentRecord, TaskRecord, TeamRecord } from '../store/entities.js';
 import type { SqliteStore } from '../store/sqlite-store.js';
 import { createFairTaskQueue } from './queue.js';
+import { RuntimeGitIsolationManager } from './git-manager.js';
 
 const DEFAULT_TICK_INTERVAL_MS = 250;
 const DEFAULT_READY_TASK_LIMIT = 200;
@@ -36,6 +37,7 @@ export interface SchedulerOptions {
   store: SqliteStore;
   tickIntervalMs?: number;
   readyTaskLimit?: number;
+  gitManager?: RuntimeGitIsolationManager;
 }
 
 export interface SchedulerDispatch {
@@ -44,11 +46,14 @@ export interface SchedulerDispatch {
   agent_id: string;
   required_role: string | null;
   priority: number;
+  git_branch: string;
+  git_worktree_path: string;
 }
 
 export interface SchedulerTeamTick {
   team_id: string;
   recovered_tasks: number;
+  cleaned_assignments: number;
   dispatched_count: number;
   dispatches: SchedulerDispatch[];
 }
@@ -56,6 +61,7 @@ export interface SchedulerTeamTick {
 export interface SchedulerTickResult {
   scanned_teams: number;
   recovered_count: number;
+  cleaned_count: number;
   dispatched_count: number;
   teams: SchedulerTeamTick[];
   dispatches: SchedulerDispatch[];
@@ -65,6 +71,7 @@ export class RuntimeScheduler {
   readonly store: SqliteStore;
   readonly tickIntervalMs: number;
   readonly readyTaskLimit: number;
+  readonly gitManager: RuntimeGitIsolationManager;
 
   private timer: NodeJS.Timeout | null;
   private readonly queueCursorByTeam: Map<string, number>;
@@ -75,6 +82,9 @@ export class RuntimeScheduler {
     this.store = options.store;
     this.tickIntervalMs = toPositiveInt(options.tickIntervalMs, DEFAULT_TICK_INTERVAL_MS);
     this.readyTaskLimit = toPositiveInt(options.readyTaskLimit, DEFAULT_READY_TASK_LIMIT);
+    this.gitManager = options.gitManager ?? new RuntimeGitIsolationManager({
+      store: this.store
+    });
     this.timer = null;
     this.queueCursorByTeam = new Map();
     this.agentCursorByTeam = new Map();
@@ -104,6 +114,7 @@ export class RuntimeScheduler {
       return {
         scanned_teams: 0,
         recovered_count: 0,
+        cleaned_count: 0,
         dispatched_count: 0,
         teams: [],
         dispatches: []
@@ -113,18 +124,30 @@ export class RuntimeScheduler {
     this.ticking = true;
     try {
       const teams = this.store.listActiveTeams();
+      const inactiveTeams = this
+        .store
+        .listTeams()
+        .filter((team) => team.status !== 'active');
       const teamTicks = teams.map((team) => this.dispatchTeam(team));
       const dispatches = teamTicks.flatMap((teamTick) => teamTick.dispatches);
       const recoveredCount = teamTicks
         .reduce((acc, teamTick) => acc + teamTick.recovered_tasks, 0);
+      const cleanedFromActive = teamTicks
+        .reduce((acc, teamTick) => acc + teamTick.cleaned_assignments, 0);
+      const cleanedFromInactive = inactiveTeams.reduce((acc, team) => {
+        const cleanup = this.gitManager.releaseTeamAssignments(team.team_id, `team_${team.status}`);
+        return acc + cleanup.released_count;
+      }, 0);
+      const cleanedCount = cleanedFromActive + cleanedFromInactive;
 
-      if (dispatches.length > 0 || recoveredCount > 0) {
+      if (dispatches.length > 0 || recoveredCount > 0 || cleanedCount > 0) {
         this.store.logEvent({
           event_type: 'scheduler_tick',
           payload: {
             scanned_teams: teams.length,
             recovered_tasks: recoveredCount,
-            dispatched_count: dispatches.length
+            dispatched_count: dispatches.length,
+            cleaned_assignments: cleanedCount
           },
           created_at: nowIso()
         });
@@ -133,6 +156,7 @@ export class RuntimeScheduler {
       return {
         scanned_teams: teams.length,
         recovered_count: recoveredCount,
+        cleaned_count: cleanedCount,
         dispatched_count: dispatches.length,
         teams: teamTicks,
         dispatches
@@ -159,12 +183,12 @@ export class RuntimeScheduler {
   private dispatchTeam(team: TeamRecord): SchedulerTeamTick {
     const recovered = this.store.recoverExpiredTaskLeases(team.team_id, nowIso());
     const dispatches: SchedulerDispatch[] = [];
+    const agents = this.store.listAgentsByTeam(team.team_id);
+    const cleanup = this.gitManager.cleanupForTeam(team, agents, this.store.listTasks(team.team_id));
 
     // Always build fairness input from the full ready set, not a top-priority SQL slice.
     const readyTasks = this.store.listReadyTasks(team.team_id, UNBOUNDED_READY_TASK_LIMIT);
-    const idleAgents = this.store
-      .listAgentsByTeam(team.team_id)
-      .filter((agent) => agent.status === 'idle');
+    const idleAgents = agents.filter((agent) => agent.status === 'idle');
 
     if (readyTasks.length > 0 && idleAgents.length > 0) {
       const queueCursor = this.queueCursorByTeam.get(team.team_id) ?? 0;
@@ -179,12 +203,34 @@ export class RuntimeScheduler {
         const selected = queue.takeForRole(agent.role);
         if (!selected) {
           this.releaseReservedAgent(team.team_id, agent.agent_id);
+          this.gitManager.releaseAgentAssignment(team.team_id, agent.agent_id, 'reserve_released_no_task');
+          continue;
+        }
+
+        const allocation = this.gitManager.allocateForAgent({
+          team_id: team.team_id,
+          agent_id: agent.agent_id,
+          role: agent.role
+        });
+        if (!allocation.ok || !allocation.assignment) {
+          this.releaseReservedAgent(team.team_id, agent.agent_id);
+          this.store.logEvent({
+            team_id: team.team_id,
+            agent_id: agent.agent_id,
+            task_id: selected.task_id,
+            event_type: 'scheduler_git_isolation_error',
+            payload: {
+              error: allocation.error ?? 'failed to allocate git isolation assignment'
+            },
+            created_at: nowIso()
+          });
           continue;
         }
 
         const claimed = this.tryClaim(team.team_id, agent.agent_id, selected);
         if (!claimed) {
           this.releaseReservedAgent(team.team_id, agent.agent_id);
+          this.gitManager.releaseAgentAssignment(team.team_id, agent.agent_id, 'claim_failed');
           continue;
         }
 
@@ -193,7 +239,9 @@ export class RuntimeScheduler {
           task_id: selected.task_id,
           agent_id: agent.agent_id,
           required_role: selected.required_role,
-          priority: selected.priority
+          priority: selected.priority,
+          git_branch: allocation.assignment.branch,
+          git_worktree_path: allocation.assignment.worktree_path
         });
       }
 
@@ -207,6 +255,7 @@ export class RuntimeScheduler {
     return {
       team_id: team.team_id,
       recovered_tasks: recovered.recovered,
+      cleaned_assignments: cleanup.released_count,
       dispatched_count: dispatches.length,
       dispatches
     };

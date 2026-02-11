@@ -5,6 +5,7 @@ import { PolicyEngine } from './policy-engine.js';
 import { HookEngine } from './hooks.js';
 import { registerBuiltInPolicyHooks } from './policy-hooks.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import { RuntimeGitIsolationManager } from '../runtime/git-manager.js';
 import type { ToolServerLike } from './tools/types.js';
 
 interface StoreFactoryOptions {
@@ -31,6 +32,7 @@ export interface CreateSchedulerOptions {
   server?: MCPServer;
   tickIntervalMs?: number;
   readyTaskLimit?: number;
+  gitManager?: RuntimeGitIsolationManager;
 }
 
 export function createServer(options: CreateServerOptions = {}): MCPServer {
@@ -53,6 +55,7 @@ export function createScheduler(options: CreateSchedulerOptions = {}): RuntimeSc
   return new RuntimeScheduler({
     store,
     tickIntervalMs: options.tickIntervalMs,
-    readyTaskLimit: options.readyTaskLimit
+    readyTaskLimit: options.readyTaskLimit,
+    gitManager: options.gitManager
   });
 }
