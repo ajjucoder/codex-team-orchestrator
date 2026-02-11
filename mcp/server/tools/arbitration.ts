@@ -1,6 +1,10 @@
 import type { ToolServerLike } from './types.js';
 import { arbitrateMerge, type VoteRecord } from '../arbitration.js';
-import { evaluateMergeCoordinatorDecision, type MergeVoteEvidence } from '../../runtime/merge-coordinator.js';
+import {
+  evaluateMergeCoordinatorDecision,
+  type MergeTargetMetadata,
+  type MergeVoteEvidence
+} from '../../runtime/merge-coordinator.js';
 
 function teamHasAgent(server: ToolServerLike, teamId: string, agentId: string): boolean {
   const agent = server.store.getAgent(agentId);
@@ -24,6 +28,22 @@ function readVotes(input: Record<string, unknown>): VoteRecord[] {
 
 function readVoteReason(vote: Record<string, unknown>): string | null {
   return typeof vote.reason === 'string' ? vote.reason : null;
+}
+
+function readMergeTarget(input: Record<string, unknown>): MergeTargetMetadata | undefined {
+  const rawTarget = input.merge_target;
+  if (!rawTarget || typeof rawTarget !== 'object' || Array.isArray(rawTarget)) return undefined;
+  const target = rawTarget as Record<string, unknown>;
+  const targetType = readString(target, 'target_type');
+  if (targetType !== 'integration' && targetType !== 'standard') return undefined;
+  const targetRef = readString(target, 'target_ref');
+  const metadataSource = readString(target, 'metadata_source');
+
+  return {
+    target_type: targetType,
+    target_ref: targetRef.length > 0 ? targetRef : null,
+    metadata_source: metadataSource.length > 0 ? metadataSource : null
+  };
 }
 
 function toMergeEvidence(server: ToolServerLike, votes: VoteRecord[]): MergeVoteEvidence[] {
@@ -89,10 +109,12 @@ export function registerArbitrationTools(server: ToolServerLike): void {
       lead_agent_id: leadAgentId || null
     });
     const proposalId = readString(input, 'proposal_id');
+    const mergeTarget = readMergeTarget(input);
     const mergeEvidence = readMergeEvidence(server, input);
     const priorEvents = server.store.listEvents(teamId, 500);
     const coordinator = evaluateMergeCoordinatorDecision({
       proposal_id: proposalId,
+      merge_target: mergeTarget,
       votes: mergeEvidence,
       arbitration: {
         strategy: readString(input, 'strategy'),
@@ -137,6 +159,7 @@ export function registerArbitrationTools(server: ToolServerLike): void {
       action: coordinator.action,
       blocked: coordinator.blocked,
       merge_type: coordinator.merge_type,
+      merge_target: coordinator.merge_target,
       failed_gates: coordinator.failed_gates,
       gates: coordinator.gates,
       conflict: coordinator.conflict

@@ -4,6 +4,16 @@
   "properties": {
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "proposal_id": { "type": "string" },
+    "merge_target": {
+      "type": "object",
+      "required": ["target_type"],
+      "properties": {
+        "target_type": { "type": "string", "enum": ["integration", "standard"] },
+        "target_ref": { "type": "string", "minLength": 1 },
+        "metadata_source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "strategy": { "type": "string", "enum": ["consensus", "lead", "strict_vote"] },
     "lead_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "votes": {

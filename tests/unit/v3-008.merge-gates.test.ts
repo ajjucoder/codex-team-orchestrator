@@ -2,13 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   evaluateGuardrailMergeGate,
-  evaluateMergeCoordinatorDecision,
-  isIntegrationMergeProposal
+  evaluateMergeCoordinatorDecision
 } from '../../mcp/runtime/merge-coordinator.js';
 
 test('V3-008 unit: integration merge requires reviewer and tester pass evidence', () => {
   const decision = evaluateMergeCoordinatorDecision({
-    proposal_id: 'integration_patch_v1',
+    proposal_id: 'artifact_patch_v1',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     votes: [
       { agent_id: 'agent_lead', role: 'lead', decision: 'approve' },
       { agent_id: 'agent_reviewer', role: 'reviewer', decision: 'approve' }
@@ -21,7 +25,7 @@ test('V3-008 unit: integration merge requires reviewer and tester pass evidence'
     }
   });
 
-  assert.equal(isIntegrationMergeProposal('integration_patch_v1'), true);
+  assert.equal(decision.merge_type, 'integration');
   assert.equal(decision.blocked, true);
   assert.equal(decision.action, 'block');
   assert.equal(decision.decision, 'reject');
@@ -29,9 +33,67 @@ test('V3-008 unit: integration merge requires reviewer and tester pass evidence'
   assert.match(decision.reason, /tester_pass_evidence/);
 });
 
+test('V3-008 unit: proposal_id naming cannot bypass integration gate requirements', () => {
+  const decision = evaluateMergeCoordinatorDecision({
+    proposal_id: 'proposal_bypass_attempt',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
+    votes: [
+      { agent_id: 'agent_lead', role: 'lead', decision: 'approve' }
+    ],
+    arbitration: {
+      strategy: 'lead',
+      decision: 'approve',
+      reason: 'lead decision applied',
+      stats: { approve: 1, reject: 0, total: 1 }
+    }
+  });
+
+  assert.equal(decision.merge_type, 'integration');
+  assert.equal(decision.blocked, true);
+  assert.equal(decision.action, 'block');
+  assert.deepEqual(decision.failed_gates, ['reviewer_pass_evidence', 'tester_pass_evidence']);
+  assert.match(decision.reason, /missing reviewer approval evidence/);
+  assert.match(decision.reason, /missing tester approval evidence/);
+});
+
+test('V3-008 unit: integration-like proposal_id does not force gates without integration target metadata', () => {
+  const decision = evaluateMergeCoordinatorDecision({
+    proposal_id: 'integration_patch_disguised',
+    merge_target: {
+      target_type: 'standard',
+      target_ref: 'refs/heads/feature/fast-fix',
+      metadata_source: 'target_registry'
+    },
+    votes: [
+      { agent_id: 'agent_lead', role: 'lead', decision: 'approve' },
+      { agent_id: 'agent_reviewer', role: 'reviewer', decision: 'approve' }
+    ],
+    arbitration: {
+      strategy: 'lead',
+      decision: 'approve',
+      reason: 'lead decision applied',
+      stats: { approve: 2, reject: 0, total: 2 }
+    }
+  });
+
+  assert.equal(decision.merge_type, 'standard');
+  assert.equal(decision.blocked, false);
+  assert.equal(decision.action, 'merge');
+  assert.deepEqual(decision.failed_gates, []);
+});
+
 test('V3-008 unit: failed quality gate blocks merge with traceable reason', () => {
   const decision = evaluateMergeCoordinatorDecision({
-    proposal_id: 'integration_patch_v2',
+    proposal_id: 'artifact_patch_v2',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     votes: [
       { agent_id: 'agent_reviewer', role: 'reviewer', decision: 'approve' },
       { agent_id: 'agent_tester', role: 'tester', decision: 'approve' }
@@ -54,7 +116,12 @@ test('V3-008 unit: failed quality gate blocks merge with traceable reason', () =
 
 test('V3-008 unit: conflict handling is deterministic retry then escalation', () => {
   const first = evaluateMergeCoordinatorDecision({
-    proposal_id: 'integration_conflict_1',
+    proposal_id: 'proposal_conflict_1',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     votes: [
       { agent_id: 'agent_reviewer_a', role: 'reviewer', decision: 'approve' },
       { agent_id: 'agent_reviewer_b', role: 'reviewer', decision: 'reject' },
@@ -75,7 +142,12 @@ test('V3-008 unit: conflict handling is deterministic retry then escalation', ()
   assert.equal(first.conflict.next_action, 'retry');
 
   const second = evaluateMergeCoordinatorDecision({
-    proposal_id: 'integration_conflict_1',
+    proposal_id: 'proposal_conflict_1',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     votes: [
       { agent_id: 'agent_reviewer_a', role: 'reviewer', decision: 'approve' },
       { agent_id: 'agent_reviewer_b', role: 'reviewer', decision: 'reject' },
@@ -92,7 +164,7 @@ test('V3-008 unit: conflict handling is deterministic retry then escalation', ()
       {
         event_type: 'merge_gate_decision',
         payload: {
-          proposal_id: 'integration_conflict_1',
+          proposal_id: 'proposal_conflict_1',
           conflict: { detected: true },
           outcome: { action: 'retry' }
         }

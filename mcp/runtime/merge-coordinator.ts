@@ -22,6 +22,12 @@ export interface MergeArbitrationSnapshot {
   stats: MergeVoteStats;
 }
 
+export interface MergeTargetMetadata {
+  target_type: MergeType;
+  target_ref?: string | null;
+  metadata_source?: string | null;
+}
+
 export interface MergeGateEvaluation {
   gate_id: 'reviewer_pass_evidence' | 'tester_pass_evidence' | 'arbitration_approval';
   required: boolean;
@@ -43,6 +49,7 @@ export interface MergeConflictResolution {
 
 export interface MergeCoordinatorInput {
   proposal_id: string;
+  merge_target?: MergeTargetMetadata;
   votes: MergeVoteEvidence[];
   arbitration: MergeArbitrationSnapshot;
   prior_events?: Array<Record<string, unknown>>;
@@ -51,6 +58,7 @@ export interface MergeCoordinatorInput {
 
 export interface MergeCoordinatorResult {
   merge_type: MergeType;
+  merge_target: MergeTargetMetadata;
   decision: MergeDecision;
   action: MergeAction;
   blocked: boolean;
@@ -127,9 +135,22 @@ export function isIntegrationMergeProposal(proposalId: string): boolean {
   return INTEGRATION_PROPOSAL_PATTERN.test(readString(proposalId));
 }
 
+function normalizeMergeTargetMetadata(input: MergeCoordinatorInput['merge_target']): MergeTargetMetadata {
+  const targetType: MergeType = input?.target_type === 'integration' ? 'integration' : 'standard';
+  const targetRef = readString(input?.target_ref, '');
+  const metadataSource = readString(input?.metadata_source, '');
+
+  return {
+    target_type: targetType,
+    target_ref: targetRef.length > 0 ? targetRef : null,
+    metadata_source: metadataSource.length > 0 ? metadataSource : null
+  };
+}
+
 export function evaluateMergeCoordinatorDecision(input: MergeCoordinatorInput): MergeCoordinatorResult {
   const proposalId = readString(input.proposal_id);
-  const mergeType: MergeType = isIntegrationMergeProposal(proposalId) ? 'integration' : 'standard';
+  const mergeTarget = normalizeMergeTargetMetadata(input.merge_target);
+  const mergeType: MergeType = mergeTarget.target_type;
   const integrationRequired = mergeType === 'integration';
   const retryLimit = Math.max(1, toNonNegativeInt(input.conflict_retry_limit, 1));
 
@@ -226,6 +247,7 @@ export function evaluateMergeCoordinatorDecision(input: MergeCoordinatorInput): 
 
   return {
     merge_type: mergeType,
+    merge_target: mergeTarget,
     decision,
     action,
     blocked,
@@ -236,6 +258,7 @@ export function evaluateMergeCoordinatorDecision(input: MergeCoordinatorInput): 
     event_payload: {
       proposal_id: proposalId,
       merge_type: mergeType,
+      merge_target: mergeTarget,
       arbitration: input.arbitration,
       gates,
       failed_gates: failedGateIds,

@@ -17,7 +17,7 @@ afterEach(() => {
   rmSync(logPath, { force: true });
 });
 
-test('V3-008 integration: integration merge blocks without tester evidence and emits structured gate events', () => {
+test('V3-008 integration: integration target blocks without tester evidence and emits structured gate events', () => {
   const server = createServer({ dbPath, logPath });
   server.start();
   registerTeamLifecycleTools(server);
@@ -40,7 +40,12 @@ test('V3-008 integration: integration merge blocks without tester evidence and e
 
   const merge = server.callTool('team_merge_decide', {
     team_id: teamId,
-    proposal_id: 'integration_patch_v3_008',
+    proposal_id: 'proposal_bypass_attempt_v3_008',
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     strategy: 'lead',
     lead_agent_id: lead.agent.agent_id,
     votes: [
@@ -53,6 +58,8 @@ test('V3-008 integration: integration merge blocks without tester evidence and e
   assert.equal(merge.decision, 'reject');
   assert.equal(merge.blocked, true);
   assert.equal(merge.action, 'block');
+  assert.equal(merge.merge_type, 'integration');
+  assert.equal(merge.merge_target.target_type, 'integration');
   assert.deepEqual(merge.failed_gates, ['tester_pass_evidence']);
   assert.match(String(merge.reason ?? ''), /missing tester approval evidence/);
 
@@ -73,6 +80,7 @@ test('V3-008 integration: integration merge blocks without tester evidence and e
   assert.equal(Boolean(guardrailGateEvent), true);
   assert.equal(mergeGateEvent?.payload.outcome.action, 'block');
   assert.equal(mergeGateEvent?.payload.failed_gates[0], 'tester_pass_evidence');
+  assert.equal(mergeGateEvent?.payload.merge_target.target_type, 'integration');
   assert.equal(guardrailGateEvent?.payload.gate.gate_id, 'merge_readiness_consensus');
 
   server.store.close();
@@ -95,10 +103,15 @@ test('V3-008 integration: conflict handling performs deterministic retry then es
   const reviewerB = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
   const tester = server.callTool('team_spawn', { team_id: teamId, role: 'tester' });
 
-  const proposalId = 'integration_conflict_v3_008';
+  const proposalId = 'proposal_conflict_v3_008';
   const input = {
     team_id: teamId,
     proposal_id: proposalId,
+    merge_target: {
+      target_type: 'integration',
+      target_ref: 'refs/heads/integration/main',
+      metadata_source: 'target_registry'
+    },
     strategy: 'strict_vote',
     votes: [
       { agent_id: lead.agent.agent_id, decision: 'approve' },
@@ -112,6 +125,7 @@ test('V3-008 integration: conflict handling performs deterministic retry then es
   assert.equal(first.ok, true);
   assert.equal(first.decision, 'reject');
   assert.equal(first.action, 'retry');
+  assert.equal(first.merge_type, 'integration');
   assert.equal(first.conflict.retry_attempt, 1);
   assert.equal(first.conflict.next_action, 'retry');
 
