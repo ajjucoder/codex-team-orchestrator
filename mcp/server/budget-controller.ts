@@ -294,15 +294,12 @@ export function optimizeExecutionPlan({
   token_cost_per_agent,
   budget_tokens_remaining
 }: OptimizeExecutionPlanInput): OptimizeExecutionPlanResult {
-  const tokenBudget = Math.max(
+  const runtimeTokenBudget = Math.max(0, Math.floor(readOptimizerNumber(budget_tokens_remaining, 0)));
+  const policyTokenSoftLimit = Math.max(
     0,
-    Math.floor(
-      readOptimizerNumber(
-        policy?.budgets?.token_soft_limit,
-        Math.max(0, budget_tokens_remaining)
-      )
-    )
+    Math.floor(readOptimizerNumber(policy?.budgets?.token_soft_limit, runtimeTokenBudget))
   );
+  const tokenBudget = Math.min(policyTokenSoftLimit, runtimeTokenBudget);
   const latencySloMs = Math.max(
     1,
     Math.floor(readOptimizerNumber(policy?.optimizer?.latency_slo_ms, 240_000))

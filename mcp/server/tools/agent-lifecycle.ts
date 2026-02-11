@@ -730,7 +730,28 @@ export function registerAgentLifecycleTools(
           }
         });
         if (!delivery.ok) {
-          return workerEnvelopeFailure('worker adapter send failed', delivery.error);
+          const rollback = server.store.rollbackMessageInsert(teamId, result.message.message_id);
+          server.store.logEvent({
+            team_id: teamId,
+            agent_id: fromAgentId,
+            message_id: result.message.message_id,
+            event_type: 'worker_instruction_dispatch_rollback',
+            payload: {
+              from_agent_id: fromAgentId,
+              to_agent_id: toAgentId,
+              worker_error: delivery.error,
+              rollback
+            }
+          });
+          const rollbackSuffix = rollback.ok
+            ? `dispatch compensation ${rollback.rolled_back ? 'succeeded' : 'skipped'}`
+            : `dispatch compensation failed: ${String(rollback.error ?? 'unknown rollback error')}`;
+          return {
+            ok: false,
+            error: `worker adapter send failed: ${String(delivery.error.message ?? 'worker adapter failure')} (${rollbackSuffix})`,
+            worker_error: delivery.error,
+            rollback
+          };
         }
         workerDelivery = delivery.data;
       }

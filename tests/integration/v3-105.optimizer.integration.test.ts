@@ -46,3 +46,48 @@ test('V3-105 integration: team_plan_fanout returns optimizer decision bound to r
   server.store.close();
   cleanup();
 });
+
+test('V3-105 integration: optimizer recommendation is capped by runtime budget_tokens_remaining', () => {
+  cleanup();
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerFanoutTools(server);
+
+  const started = server.callTool('team_start', {
+    objective: 'optimizer runtime cap integration',
+    profile: 'fast',
+    max_threads: 6
+  });
+  assert.equal(started.ok, true);
+  const teamId = started.team.team_id as string;
+
+  const constrained = server.callTool('team_plan_fanout', {
+    team_id: teamId,
+    task_size: 'medium',
+    estimated_parallel_tasks: 6,
+    token_cost_per_agent: 1000,
+    budget_tokens_remaining: 2500,
+    enforce_optimizer: true
+  });
+  const unconstrained = server.callTool('team_plan_fanout', {
+    team_id: teamId,
+    task_size: 'medium',
+    estimated_parallel_tasks: 6,
+    token_cost_per_agent: 1000,
+    budget_tokens_remaining: 5000,
+    enforce_optimizer: true
+  });
+
+  assert.equal(constrained.ok, true);
+  assert.equal(unconstrained.ok, true);
+  assert.equal(constrained.optimizer.constraints.token_budget, 2500);
+  assert.equal(unconstrained.optimizer.constraints.token_budget, 5000);
+  assert.equal(constrained.optimizer.meets_slo.cost, false);
+  assert.equal(unconstrained.optimizer.meets_slo.cost, true);
+  assert.equal(constrained.optimizer.reason, 'best_tradeoff_under_constraints');
+  assert.equal(unconstrained.optimizer.reason, 'meets_all_slo');
+
+  server.store.close();
+  cleanup();
+});

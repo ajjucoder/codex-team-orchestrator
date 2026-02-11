@@ -156,6 +156,57 @@ function readApprovals(hookContext: HookContext): ApprovalEntry[] {
     .filter((entry) => entry.agent_id.length > 0);
 }
 
+function parseApprovalTimestamp(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldReplaceApprovalEntry(
+  existing: { decidedAt: number | null; index: number },
+  candidate: { decidedAt: number | null; index: number }
+): boolean {
+  if (candidate.decidedAt !== null && existing.decidedAt !== null) {
+    if (candidate.decidedAt !== existing.decidedAt) {
+      return candidate.decidedAt > existing.decidedAt;
+    }
+    return candidate.index >= existing.index;
+  }
+  if (candidate.decidedAt !== null && existing.decidedAt === null) {
+    return true;
+  }
+  if (candidate.decidedAt === null && existing.decidedAt !== null) {
+    return false;
+  }
+  return candidate.index >= existing.index;
+}
+
+function dedupeApprovalsByAgent(approvals: ApprovalEntry[]): ApprovalEntry[] {
+  const latestByAgent = new Map<string, { entry: ApprovalEntry; decidedAt: number | null; index: number }>();
+  approvals.forEach((entry, index) => {
+    const decidedAt = parseApprovalTimestamp(entry.decided_at);
+    const current = latestByAgent.get(entry.agent_id);
+    if (!current) {
+      latestByAgent.set(entry.agent_id, {
+        entry,
+        decidedAt,
+        index
+      });
+      return;
+    }
+    if (shouldReplaceApprovalEntry(current, { decidedAt, index })) {
+      latestByAgent.set(entry.agent_id, {
+        entry,
+        decidedAt,
+        index
+      });
+    }
+  });
+  return [...latestByAgent.values()]
+    .sort((a, b) => a.index - b.index)
+    .map((value) => value.entry);
+}
+
 function readRequestedAt(hookContext: HookContext): number | null {
   const value = typeof hookContext.input.approval_requested_at === 'string'
     ? hookContext.input.approval_requested_at
@@ -303,7 +354,8 @@ export function registerBuiltInPolicyHooks(server: ToolServerLike): void {
         const quality = asRecord(policy.quality) ?? {};
         const riskTier = resolveRiskTier(server, hookContext, quality);
         const gateConfig = resolveApprovalGateConfig(policy, riskTier);
-        const approvals = readApprovals(hookContext);
+        const approvalsRaw = readApprovals(hookContext);
+        const approvals = dedupeApprovalsByAgent(approvalsRaw);
         const approved = approvals.filter((entry) => entry.decision === 'approve').length;
 
         if (gateConfig.required_approvals > 0) {
@@ -326,7 +378,9 @@ export function registerBuiltInPolicyHooks(server: ToolServerLike): void {
                 risk_tier: riskTier,
                 approval_timeout_ms: gateConfig.timeout_ms,
                 escalation_policy: gateConfig.escalation_policy,
-                approval_chain: approvals
+                approval_chain: approvals,
+                approval_chain_raw_count: approvalsRaw.length,
+                approval_chain_unique_count: approvals.length
               }
             };
           }
@@ -347,7 +401,9 @@ export function registerBuiltInPolicyHooks(server: ToolServerLike): void {
                 required_approvals: gateConfig.required_approvals,
                 approved,
                 escalation_policy: gateConfig.escalation_policy,
-                approval_chain: approvals
+                approval_chain: approvals,
+                approval_chain_raw_count: approvalsRaw.length,
+                approval_chain_unique_count: approvals.length
               }
             };
           }
@@ -361,7 +417,9 @@ export function registerBuiltInPolicyHooks(server: ToolServerLike): void {
             required_approvals: gateConfig.required_approvals,
             approved,
             escalation_policy: gateConfig.escalation_policy,
-            approval_chain: approvals
+            approval_chain: approvals,
+            approval_chain_raw_count: approvalsRaw.length,
+            approval_chain_unique_count: approvals.length
           }
         };
       }

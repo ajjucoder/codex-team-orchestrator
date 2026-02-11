@@ -190,6 +190,17 @@ function parseAllowedPrefixes(policy: GuardrailPolicy | undefined, role: string)
   return [...new Set([...rolePrefixes, ...defaultPrefixes])];
 }
 
+function matchesAllowPrefix(command: string, prefix: string): boolean {
+  if (command === prefix) return true;
+  if (!command.startsWith(prefix)) return false;
+  const next = command.charAt(prefix.length);
+  return /\s/.test(next);
+}
+
+function hasChainedCommandOperators(command: string): boolean {
+  return /&&|\|\||;|\|/.test(command);
+}
+
 export function evaluateCommandPolicy({
   policy,
   role,
@@ -246,7 +257,15 @@ export function evaluateCommandPolicy({
 
   const allowPrefixes = parseAllowedPrefixes(policy, role);
   for (const prefix of allowPrefixes) {
-    if (normalizedCommand.startsWith(prefix)) {
+    if (matchesAllowPrefix(normalizedCommand, prefix)) {
+      if (hasChainedCommandOperators(normalizedCommand)) {
+        return {
+          allowed: false,
+          matched_rule: 'allow_prefix_chained_command_block',
+          deny_reason: 'allow-prefix command contains chained command operators',
+          escalation_policy: readString(commandPolicy?.escalation_policy)
+        };
+      }
       return {
         allowed: true,
         matched_rule: `allow_prefix:${prefix}`,
