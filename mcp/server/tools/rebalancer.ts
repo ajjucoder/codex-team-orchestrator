@@ -52,6 +52,8 @@ export function registerRebalancerTools(server: ToolServerLike): void {
       .store
       .listAgentsByTeam(teamId)
       .filter((agent) => agent.status !== 'offline');
+    const idleAgents = activeAgents.filter((agent) => agent.status === 'idle');
+    const leadPresent = activeAgents.some((agent) => agent.role === 'lead');
     const activeRoleCounts = new Map<string, number>();
     for (const agent of activeAgents) {
       activeRoleCounts.set(agent.role, (activeRoleCounts.get(agent.role) ?? 0) + 1);
@@ -113,6 +115,10 @@ export function registerRebalancerTools(server: ToolServerLike): void {
         scale_down_by: plan.scale_down_by,
         scaled_up: spawned.length,
         scaled_down: offline_marked.length,
+        ready_tasks: plan.backlog.ready_tasks,
+        in_progress_tasks: plan.backlog.in_progress_tasks,
+        idle_agents: idleAgents.length,
+        lead_present: leadPresent,
         errors
       }
     });
@@ -130,6 +136,12 @@ export function registerRebalancerTools(server: ToolServerLike): void {
           model: agent.model
         })),
         offline_agent_ids: offline_marked
+      },
+      execution_hints: {
+        ready_tasks: plan.backlog.ready_tasks,
+        in_progress_tasks: plan.backlog.in_progress_tasks,
+        idle_agents: idleAgents.length,
+        lead_present: leadPresent
       },
       errors
     };

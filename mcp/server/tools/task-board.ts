@@ -22,6 +22,11 @@ function readOptionalNumber(input: Record<string, unknown>, key: string): number
   return Number.isFinite(value) ? value : undefined;
 }
 
+function readOptionalBoolean(input: Record<string, unknown>, key: string): boolean | undefined {
+  const value = input[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 function readTaskStatus(input: Record<string, unknown>, key: string): TaskStatus | undefined {
   const value = readOptionalString(input, key);
   if (!value) return undefined;
@@ -215,6 +220,9 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
     const dependencyIds = input.depends_on_task_ids !== undefined
       ? normalizeDependencyIds(input.depends_on_task_ids)
       : null;
+    const qualityChecksPassed = readOptionalBoolean(input, 'quality_checks_passed');
+    const artifactRefsCount = readOptionalNumber(input, 'artifact_refs_count');
+    const complianceAck = readOptionalBoolean(input, 'compliance_ack');
     if (dependencyIds !== null) {
       const dependencyValidation = validateDependencies(server, teamId, taskId, dependencyIds);
       if (!dependencyValidation.ok) return dependencyValidation;
@@ -245,8 +253,33 @@ export function registerTaskBoardTools(server: ToolServerLike): void {
       server.store.refreshTaskReadiness(teamId, taskId);
     }
 
+    const updatedTask = updated.task ?? null;
+    if (
+      updatedTask &&
+      (updatedTask.status === 'done' || updatedTask.status === 'blocked' || updatedTask.status === 'failed_terminal')
+    ) {
+      if (updatedTask.claimed_by) {
+        server.store.updateAgentStatus(updatedTask.claimed_by, 'idle');
+      }
+      server.store.logEvent({
+        team_id: teamId,
+        task_id: taskId,
+        agent_id: updatedTask.claimed_by,
+        event_type: 'task_terminal_evidence',
+        payload: {
+          from_status: existing.status,
+          to_status: updatedTask.status,
+          evidence: {
+            quality_checks_passed: qualityChecksPassed ?? null,
+            artifact_refs_count: Number.isFinite(artifactRefsCount) ? artifactRefsCount : null,
+            compliance_ack: complianceAck ?? null
+          }
+        }
+      });
+    }
+
     let promotedTasks: Array<HydratedTask | null> = [];
-    if (existing.status !== 'done' && updated.task?.status === 'done') {
+    if (existing.status !== 'done' && updatedTask?.status === 'done') {
       promotedTasks = server
         .store
         .refreshDependentTasks(teamId, taskId)

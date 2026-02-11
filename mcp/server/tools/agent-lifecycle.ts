@@ -695,6 +695,23 @@ export function registerAgentLifecycleTools(
       }
     }
 
+    if (result.inserted) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: toAgentId,
+        message_id: result.message.message_id,
+        event_type: 'worker_instruction_dispatched',
+        payload: {
+          from_agent_id: fromAgentId,
+          to_agent_id: toAgentId,
+          summary_length: summary.length,
+          artifact_refs_count: effectiveArtifactRefs.length,
+          worker_delivery_status: workerDelivery?.status ?? null,
+          worker_instruction_id: workerDelivery?.instruction_id ?? null
+        }
+      });
+    }
+
     return {
       ok: true,
       inserted: result.inserted,
@@ -892,6 +909,24 @@ export function registerAgentLifecycleTools(
       } else {
         workerArtifacts = artifacts.data.artifacts;
       }
+    }
+
+    if (workerPoll || workerArtifacts || workerErrors.length > 0) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: agentId,
+        event_type: 'worker_execution_snapshot',
+        payload: {
+          worker_id: workerSession?.worker_id ?? null,
+          poll_status: workerPoll?.status ?? null,
+          poll_event_count: Array.isArray(workerPoll?.events) ? workerPoll.events.length : 0,
+          artifact_count: Array.isArray(workerArtifacts) ? workerArtifacts.length : 0,
+          artifact_ids: Array.isArray(workerArtifacts)
+            ? workerArtifacts.map((artifact) => String(artifact.artifact_id ?? '')).filter(Boolean)
+            : [],
+          worker_error_count: workerErrors.length
+        }
+      });
     }
 
     return {
