@@ -1,6 +1,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { RuntimeGitIsolationManager } from '../../mcp/runtime/git-manager.js';
 import { WorkerAdapter } from '../../mcp/runtime/worker-adapter.js';
@@ -12,6 +13,9 @@ import { SqliteStore } from '../../mcp/store/sqlite-store.js';
 const dbPath = '.tmp/v3-005-unit.sqlite';
 const logPath = '.tmp/v3-005-unit.log';
 const repoRoot = '.tmp/v3-005-unit-repo';
+const gitRepoRoot = '.tmp/v3-005-unit-git-repo';
+const fallbackRepoRoot = '.tmp/v3-005-unit-fallback-repo';
+const defaultModeWorktreeRoot = '.tmp/v3-005-unit-default-worktrees';
 
 afterEach(() => {
   rmSync(dbPath, { force: true });
@@ -19,6 +23,9 @@ afterEach(() => {
   rmSync(`${dbPath}-shm`, { force: true });
   rmSync(logPath, { force: true });
   rmSync(repoRoot, { recursive: true, force: true });
+  rmSync(gitRepoRoot, { recursive: true, force: true });
+  rmSync(fallbackRepoRoot, { recursive: true, force: true });
+  rmSync(defaultModeWorktreeRoot, { recursive: true, force: true });
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -49,6 +56,68 @@ function createTeamAndAgents(store: SqliteStore, teamId: string): void {
     team_id: teamId,
     role: 'reviewer',
     status: 'idle',
+    created_at: now,
+    updated_at: now
+  });
+}
+
+function runGit(repoPath: string, args: string[]): string {
+  return execFileSync('git', ['-C', repoPath, ...args], { encoding: 'utf8' }).trim();
+}
+
+function initGitRepo(repoPath: string): string {
+  rmSync(repoPath, { recursive: true, force: true });
+  mkdirSync(repoPath, { recursive: true });
+  runGit(repoPath, ['init']);
+  runGit(repoPath, ['checkout', '-B', 'main']);
+  runGit(repoPath, ['config', 'user.email', 'tests@example.com']);
+  runGit(repoPath, ['config', 'user.name', 'v3-005-tests']);
+  writeFileSync(resolve(repoPath, 'README.md'), 'seed\n', 'utf8');
+  runGit(repoPath, ['add', 'README.md']);
+  runGit(repoPath, ['commit', '-m', 'seed']);
+  return 'main';
+}
+
+function commitInWorktree(worktreePath: string, fileName: string, content: string): void {
+  writeFileSync(resolve(worktreePath, fileName), `${content}\n`, 'utf8');
+  runGit(worktreePath, ['add', fileName]);
+  runGit(worktreePath, ['commit', '-m', `add ${fileName}`]);
+}
+
+function gitBranchExists(repoPath: string, branch: string): boolean {
+  return runGit(repoPath, ['branch', '--list', branch]).length > 0;
+}
+
+function gitShowFile(repoPath: string, ref: string, fileName: string): string | null {
+  try {
+    return runGit(repoPath, ['show', `${ref}:${fileName}`]);
+  } catch {
+    return null;
+  }
+}
+
+function createTask(
+  store: SqliteStore,
+  input: {
+    teamId: string;
+    taskId: string;
+    requiredRole: string;
+    claimedBy: string;
+    status: 'in_progress' | 'done';
+    priority: number;
+  }
+): void {
+  const now = new Date().toISOString();
+  store.createTask({
+    task_id: input.taskId,
+    team_id: input.teamId,
+    title: input.taskId,
+    description: '',
+    required_role: input.requiredRole,
+    status: input.status,
+    priority: input.priority,
+    claimed_by: input.claimedBy,
+    lock_version: 0,
     created_at: now,
     updated_at: now
   });
@@ -90,6 +159,33 @@ test('V3-005 unit: unique branch/worktree allocation is persisted per active wor
   assert.equal(Object.keys(assignments).length, 2);
   assert.equal(asRecord(assignments.agent_impl).branch, allocA.assignment?.branch);
   assert.equal(asRecord(assignments.agent_review).branch, allocB.assignment?.branch);
+
+  store.close();
+});
+
+test('V3-005 unit: default manager mode stays filesystem-only without git operations', () => {
+  const store = new SqliteStore(dbPath);
+  store.migrate();
+  createTeamAndAgents(store, 'team_v3_005_unit_default_mode');
+
+  const manager = new RuntimeGitIsolationManager({
+    store,
+    worktreeRoot: defaultModeWorktreeRoot
+  });
+  const allocation = manager.allocateForAgent({
+    team_id: 'team_v3_005_unit_default_mode',
+    agent_id: 'agent_impl',
+    role: 'implementer'
+  });
+
+  assert.equal(allocation.ok, true);
+  assert.equal(Boolean(allocation.assignment), true);
+  assert.equal(allocation.assignment?.git_managed, false);
+  assert.equal(existsSync(String(allocation.assignment?.worktree_path ?? '')), true);
+
+  const released = manager.releaseTeamAssignments('team_v3_005_unit_default_mode', 'cleanup_default_mode');
+  assert.equal(released.released_count, 1);
+  assert.equal(existsSync(String(allocation.assignment?.worktree_path ?? '')), false);
 
   store.close();
 });
@@ -173,6 +269,100 @@ test('V3-005 unit: orphan cleanup removes released worker assignments and worktr
   assert.equal(finalizedCleanup.released_count, 1);
   assert.equal(manager.getTeamAssignments('team_v3_005_unit_cleanup').length, 0);
   assert.equal(existsSync(String(allocA.assignment?.worktree_path ?? '')), false);
+
+  store.close();
+});
+
+test('V3-005 unit: complete finalized lifecycle auto-integrates worker branches and prunes branch/worktree state', () => {
+  const baseBranch = initGitRepo(gitRepoRoot);
+  const store = new SqliteStore(dbPath);
+  store.migrate();
+  const teamId = 'team_v3_005_unit_finalize_complete';
+  createTeamAndAgents(store, teamId);
+
+  const manager = new RuntimeGitIsolationManager({
+    store,
+    repoRoot: gitRepoRoot
+  });
+
+  const implementer = manager.allocateForAgent({
+    team_id: teamId,
+    agent_id: 'agent_impl',
+    role: 'implementer'
+  });
+  const reviewer = manager.allocateForAgent({
+    team_id: teamId,
+    agent_id: 'agent_review',
+    role: 'reviewer'
+  });
+  assert.equal(implementer.ok, true);
+  assert.equal(reviewer.ok, true);
+  if (!implementer.assignment || !reviewer.assignment) {
+    throw new Error('expected assignments for both workers');
+  }
+
+  commitInWorktree(implementer.assignment.worktree_path, 'implementer.txt', 'implementer change');
+  commitInWorktree(reviewer.assignment.worktree_path, 'reviewer.txt', 'reviewer change');
+
+  createTask(store, {
+    teamId,
+    taskId: 'task_impl_done',
+    requiredRole: 'implementer',
+    claimedBy: 'agent_impl',
+    status: 'done',
+    priority: 1
+  });
+  createTask(store, {
+    teamId,
+    taskId: 'task_review_done',
+    requiredRole: 'reviewer',
+    claimedBy: 'agent_review',
+    status: 'done',
+    priority: 2
+  });
+  store.updateAgentStatus('agent_impl', 'idle');
+  store.updateAgentStatus('agent_review', 'idle');
+
+  const finalizedTeam = store.updateTeamStatus(teamId, 'finalized');
+  if (!finalizedTeam) {
+    throw new Error('expected finalized team');
+  }
+  const cleanup = manager.cleanupForTeam(finalizedTeam, store.listAgentsByTeam(teamId), store.listTasks(teamId));
+  assert.equal(cleanup.released_count, 2);
+  assert.equal(manager.getTeamAssignments(teamId).length, 0);
+
+  assert.equal(gitShowFile(gitRepoRoot, baseBranch, 'implementer.txt')?.trim(), 'implementer change');
+  assert.equal(gitShowFile(gitRepoRoot, baseBranch, 'reviewer.txt')?.trim(), 'reviewer change');
+  assert.equal(gitBranchExists(gitRepoRoot, implementer.assignment.branch), false);
+  assert.equal(gitBranchExists(gitRepoRoot, reviewer.assignment.branch), false);
+  assert.equal(existsSync(implementer.assignment.worktree_path), false);
+  assert.equal(existsSync(reviewer.assignment.worktree_path), false);
+
+  store.close();
+});
+
+test('V3-005 unit: non-git fallback still releases team assignments without git metadata', () => {
+  const store = new SqliteStore(dbPath);
+  store.migrate();
+  const teamId = 'team_v3_005_unit_fallback';
+  createTeamAndAgents(store, teamId);
+
+  const manager = new RuntimeGitIsolationManager({
+    store,
+    repoRoot: fallbackRepoRoot
+  });
+  const allocation = manager.allocateForAgent({
+    team_id: teamId,
+    agent_id: 'agent_impl',
+    role: 'implementer'
+  });
+  assert.equal(allocation.ok, true);
+  assert.equal(existsSync(String(allocation.assignment?.worktree_path ?? '')), true);
+
+  const released = manager.releaseTeamAssignments(teamId, 'team_finalized');
+  assert.equal(released.released_count, 1);
+  assert.equal(manager.getTeamAssignments(teamId).length, 0);
+  assert.equal(existsSync(String(allocation.assignment?.worktree_path ?? '')), false);
 
   store.close();
 });
