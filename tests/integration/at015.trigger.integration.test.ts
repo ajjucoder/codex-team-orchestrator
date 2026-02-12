@@ -24,14 +24,17 @@ test('AT-015 integration: trigger phrase creates orchestration team and logs inv
   registerTriggerTools(server);
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agents team deliver milestone M4',
+    prompt: 'use agents team deliver milestone M4 with parallel validation',
     profile: 'default',
+    task_size: 'small',
     max_threads: 4,
     active_session_model: 'gpt-5-codex'
   });
 
   assert.equal(triggered.ok, true);
   assert.equal(triggered.triggered, true);
+  assert.equal(triggered.accepted, true);
+  assert.equal(triggered.route, 'agent_teams');
   assert.equal(triggered.orchestration.task_size, 'small');
 
   const status = server.callTool('team_status', { team_id: triggered.team.team_id });
@@ -41,6 +44,31 @@ test('AT-015 integration: trigger phrase creates orchestration team and logs inv
   const logs = readFileSync(logPath, 'utf8');
   assert.match(logs, /tool_call:team_trigger/);
   assert.match(logs, /tool_call:team_start/);
+
+  server.store.close();
+});
+
+test('AT-015 integration: non-parallel trigger request routes to normal mode and does not start team', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerTriggerTools(server);
+
+  const triggered = server.callTool('team_trigger', {
+    prompt: 'use agents team tiny one file typo fix',
+    profile: 'default'
+  });
+
+  assert.equal(triggered.ok, true);
+  assert.equal(triggered.triggered, true);
+  assert.equal(triggered.accepted, false);
+  assert.equal(triggered.route, 'normal_mode');
+  assert.equal(triggered.team, undefined);
+  assert.equal(triggered.parallel_gate.passed, false);
+
+  const logs = readFileSync(logPath, 'utf8');
+  assert.match(logs, /tool_call:team_trigger/);
+  assert.doesNotMatch(logs, /tool_call:team_start/);
 
   server.store.close();
 });
@@ -103,7 +131,7 @@ test('AT-015 integration: trigger fanout planning defaults to telemetry estimato
   }
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agents team build medium scope workstream',
+    prompt: 'use agents team build medium scope workstream across modules with parallel validation',
     profile: 'default',
     task_size: 'medium',
     auto_spawn: false,

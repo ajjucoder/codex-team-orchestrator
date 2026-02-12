@@ -72,7 +72,7 @@ test('V3-109 integration: trigger planning output feeds backlog-aware ready-role
     registerTriggerTools(server);
 
     const triggered = server.callTool('team_trigger', {
-      prompt: 'use agents team coordinate medium implementation and verification',
+      prompt: 'use agents team coordinate medium implementation and verification with parallel streams',
       task_size: 'medium',
       auto_spawn: false,
       max_threads: 4,

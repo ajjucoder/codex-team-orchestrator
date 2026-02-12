@@ -6,6 +6,11 @@ import {
   REQUIRED_TRIGGER_PHRASE
 } from '../trigger.js';
 import { buildStaffingPlan, type SpecialistMetadata, type TaskSize } from '../staffing-planner.js';
+import {
+  DEFAULT_PARALLEL_GATE_THRESHOLDS,
+  evaluateParallelGate,
+  type ParallelGateThresholds
+} from '../parallel-gate.js';
 
 const HARD_MAX_THREADS = 6;
 
@@ -64,6 +69,75 @@ function readTokenSoftLimit(policy: Record<string, unknown>): number {
   if (!budgets || typeof budgets !== 'object') return 12000;
   const tokenSoftLimit = Number((budgets as Record<string, unknown>).token_soft_limit);
   return Number.isFinite(tokenSoftLimit) ? tokenSoftLimit : 12000;
+}
+
+function readProfileLimits(policy: Record<string, unknown>): { default_max_threads: number; hard_max_threads: number } {
+  const limits = readRecord(policy.limits);
+  const defaultMaxThreads = Number(limits.default_max_threads);
+  const hardMaxThreads = Number(limits.hard_max_threads);
+  return {
+    default_max_threads: Number.isFinite(defaultMaxThreads) ? defaultMaxThreads : 4,
+    hard_max_threads: Number.isFinite(hardMaxThreads) ? hardMaxThreads : HARD_MAX_THREADS
+  };
+}
+
+function readParallelGateThresholds(policy: Record<string, unknown>): ParallelGateThresholds {
+  const triggerPolicy = readRecord(policy.trigger);
+  const strictParallelGate = typeof triggerPolicy.strict_parallel_gate === 'boolean'
+    ? triggerPolicy.strict_parallel_gate
+    : DEFAULT_PARALLEL_GATE_THRESHOLDS.strict_parallel_gate;
+  const minThreadsForTeam = Number(triggerPolicy.min_threads_for_team);
+  const minParallelSignals = Number(triggerPolicy.min_parallel_signals);
+  const maxSequentialSignals = Number(triggerPolicy.max_sequential_signals);
+  return {
+    strict_parallel_gate: strictParallelGate,
+    min_threads_for_team: clamp(
+      Number.isFinite(minThreadsForTeam) ? Math.floor(minThreadsForTeam) : DEFAULT_PARALLEL_GATE_THRESHOLDS.min_threads_for_team,
+      1,
+      HARD_MAX_THREADS
+    ),
+    min_parallel_signals: Math.max(
+      0,
+      Number.isFinite(minParallelSignals)
+        ? Math.floor(minParallelSignals)
+        : DEFAULT_PARALLEL_GATE_THRESHOLDS.min_parallel_signals
+    ),
+    max_sequential_signals: Math.max(
+      0,
+      Number.isFinite(maxSequentialSignals)
+        ? Math.floor(maxSequentialSignals)
+        : DEFAULT_PARALLEL_GATE_THRESHOLDS.max_sequential_signals
+    )
+  };
+}
+
+function readProfilePolicy(server: ToolServerLike, profileName: string): Record<string, unknown> {
+  try {
+    return server.policyEngine?.loadProfile(profileName) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function readTeamMaxThreadsFromProfile(
+  requestedMaxThreads: number | null,
+  policy: Record<string, unknown>
+): number {
+  const limits = readProfileLimits(policy);
+  return toBoundedThreads(
+    Math.min(
+      requestedMaxThreads ?? limits.default_max_threads,
+      limits.hard_max_threads,
+      HARD_MAX_THREADS
+    )
+  );
+}
+
+function buildFallbackMessage(reasonCode: string): string {
+  if (reasonCode === 'not_parallelizable_sequential_signals') {
+    return 'Agent teams is not suitable here because the task looks sequential. Continue in normal mode for better output quality.';
+  }
+  return 'Agent teams is not suitable here because parallel work is insufficient. Continue in normal mode for better output quality.';
 }
 
 function specialistByRole(specialists: SpecialistMetadata[]): Map<string, SpecialistMetadata> {
@@ -161,14 +235,94 @@ export function registerTriggerTools(server: ToolServerLike): void {
       };
     }
 
+    const profileName = readOptionalString(input, 'profile') ?? 'default';
     const objective = extractObjectiveFromPrompt(prompt);
+    const taskSize = readTaskSize(input, prompt);
+    const autoSpawnEnabled = readBoolean(input, 'auto_spawn', true);
+    const profilePolicy = readProfilePolicy(server, profileName);
+    const requestedMaxThreads = readOptionalNumber(input, 'max_threads');
+    const teamMaxThreadsPreflight = readTeamMaxThreadsFromProfile(requestedMaxThreads, profilePolicy);
+    const estimatedParallelTasks = toBoundedThreads(
+      readOptionalNumber(input, 'estimated_parallel_tasks') ?? defaultEstimatedParallelTasks(taskSize)
+    );
+    const preflightStaffingPlan = buildStaffingPlan({
+      objective,
+      task_size: taskSize,
+      max_threads: teamMaxThreadsPreflight,
+      estimated_parallel_tasks: estimatedParallelTasks
+    });
+    const parallelGate = evaluateParallelGate(
+      {
+        objective,
+        task_size: taskSize,
+        estimated_parallel_tasks: estimatedParallelTasks,
+        recommended_threads: preflightStaffingPlan.recommended_threads
+      },
+      readParallelGateThresholds(profilePolicy)
+    );
+    server.store.logEvent({
+      event_type: 'team_trigger_parallel_gate',
+      payload: {
+        profile: profileName,
+        objective,
+        task_size: taskSize,
+        ...parallelGate
+      }
+    });
+    if (!parallelGate.passed) {
+      const message = buildFallbackMessage(parallelGate.reason_code);
+      server.store.logEvent({
+        event_type: 'team_trigger_routed_normal_mode',
+        payload: {
+          profile: profileName,
+          reason_code: parallelGate.reason_code,
+          objective,
+          task_size: taskSize
+        }
+      });
+      return {
+        ok: true,
+        triggered: true,
+        accepted: false,
+        route: 'normal_mode',
+        trigger_phrase: REQUIRED_TRIGGER_PHRASE,
+        parallel_gate: parallelGate,
+        recommendation: {
+          message,
+          suggested_mode: 'default',
+          objective
+        },
+        orchestration: {
+          task_size: taskSize,
+          auto_spawn_enabled: false,
+          estimated_parallel_tasks: estimatedParallelTasks,
+          recommended_threads: preflightStaffingPlan.recommended_threads,
+          hard_cap: HARD_MAX_THREADS,
+          spawn_strategy: 'none',
+          planned_roles: [],
+          staffing_planner: {
+            template_id: preflightStaffingPlan.template_id,
+            domain: preflightStaffingPlan.domain,
+            recommended_threads: preflightStaffingPlan.recommended_threads,
+            planned_roles: preflightStaffingPlan.planned_roles,
+            specialists: preflightStaffingPlan.specialists,
+            dynamic_expansion: preflightStaffingPlan.dynamic_expansion,
+            reasons: preflightStaffingPlan.reasons
+          },
+          budget_controller: null,
+          spawned_count: 0,
+          spawned_agents: [],
+          errors: [message]
+        }
+      };
+    }
+
     const startInput: Record<string, unknown> = {
       objective,
-      profile: readOptionalString(input, 'profile') ?? 'default'
+      profile: profileName
     };
-    const maxThreads = readOptionalNumber(input, 'max_threads');
-    if (maxThreads !== null) {
-      startInput.max_threads = maxThreads;
+    if (requestedMaxThreads !== null) {
+      startInput.max_threads = requestedMaxThreads;
     }
 
     const started = server.callTool('team_start', startInput, {
@@ -190,14 +344,9 @@ export function registerTriggerTools(server: ToolServerLike): void {
     const teamRecord = team as Record<string, unknown>;
     const teamId = typeof teamRecord.team_id === 'string' ? teamRecord.team_id : '';
     let canonicalTeam = teamId ? server.store.getTeam(teamId) : null;
-    const taskSize = readTaskSize(input, prompt);
-    const autoSpawnEnabled = readBoolean(input, 'auto_spawn', true);
     const policy = canonicalTeam ? (server.policyEngine?.resolveTeamPolicy(canonicalTeam) ?? {}) : {};
     const teamMaxThreads = toBoundedThreads(
       Number(canonicalTeam?.max_threads ?? teamRecord.max_threads ?? HARD_MAX_THREADS)
-    );
-    const estimatedParallelTasks = toBoundedThreads(
-      readOptionalNumber(input, 'estimated_parallel_tasks') ?? defaultEstimatedParallelTasks(taskSize)
     );
     const budgetTokensRemaining = readOptionalNumber(input, 'budget_tokens_remaining') ?? readTokenSoftLimit(policy);
     let staffingPlan = buildStaffingPlan({
@@ -381,7 +530,10 @@ export function registerTriggerTools(server: ToolServerLike): void {
     return {
       ok: true,
       triggered: true,
+      accepted: true,
+      route: 'agent_teams',
       trigger_phrase: REQUIRED_TRIGGER_PHRASE,
+      parallel_gate: parallelGate,
       team,
       orchestration: {
         task_size: taskSize,

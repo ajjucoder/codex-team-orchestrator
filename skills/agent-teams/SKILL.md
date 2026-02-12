@@ -30,7 +30,7 @@ When to use:
 - Use compact artifact references and concise summaries between workers.
 - No destructive git operations.
 - Default integration base branch to `main` unless the user explicitly provides another base branch.
-- When user explicitly requests agent teams (`use agent teams` / `use agents team`), run multi-agent mode with at least 2 workers unless user asks for single-agent mode.
+- Enforce strict parallel gate on trigger requests. If the task is not parallelizable, route to normal mode and skip team startup/spawn.
 
 ## Runtime Isolation Defaults (v3-005)
 - Scheduler allocates a unique branch + worktree binding per active worker assignment.
@@ -114,13 +114,15 @@ Use these exact card headers and key ordering in lead updates:
 - `post_status`
 
 ## Execution Flow
-1. Parse objective and derive role staffing (`<=6` workers).
-2. Build ticket queue with dependency order.
-3. Start worktrees/branches and spawn workers with explicit ownership.
-4. Run implementation/review/test loops in parallel where dependencies allow.
-5. Reconcile outputs, resolve conflicts, and merge in controlled order.
-6. Run final lint/typecheck/tests on integration branch.
-7. Return concise completion report with evidence.
+1. Parse objective and run strict parallel gate.
+2. If gate fails, return normal-mode recommendation and do not start/spawn a team.
+3. If gate passes, derive role staffing (`<=6` workers).
+4. Build ticket queue with dependency order.
+5. Start worktrees/branches and spawn workers with explicit ownership.
+6. Run implementation/review/test loops in parallel where dependencies allow.
+7. Reconcile outputs, resolve conflicts, and merge in controlled order.
+8. Run final lint/typecheck/tests on integration branch.
+9. Return concise completion report with evidence.
 
 ## Final User Report Format
 - Tickets completed / in progress / blocked
