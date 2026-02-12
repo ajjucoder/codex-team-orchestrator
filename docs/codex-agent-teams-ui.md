@@ -7,6 +7,14 @@ This document defines the Hybrid Agent-Teams UX MVP contract used by tests and r
 - Staffing planner visibility for trigger-driven and DAG-ready role shaping.
 - Operator UI-state coherence from existing tools.
 - Console/TUI card templates and command control path.
+- Runtime contract alignment with `host_orchestrated_default` and optional `managed_runtime`.
+
+## Runtime Contract
+
+- Default: `host_orchestrated_default` (host drives orchestration and tool flow).
+- Optional: `managed_runtime` enabled only by explicit runtime configuration.
+- No implicit runtime transport bootstrap in default mode.
+- Deterministic UI/CLI contracts remain mandatory in both modes.
 
 ## Data Surfaces
 
@@ -32,6 +40,7 @@ UI state is now exposed directly via these tool outputs:
   - `event_type` contains `failed|error|blocked`, or
   - `payload.ok === false`.
 - Replay digest should be stable for identical event sets.
+- `team_ui_state` must remain available and parse-compatible regardless of runtime mode.
 
 ## Console Card Templates
 
@@ -57,6 +66,8 @@ Each command emits `console:command=<name>` and optional counters:
 
 - `console:drained=<count>`
 - `console:retried=<count>`
+
+Runtime mode cannot change command semantics or marker formats.
 
 ## Determinism Rules
 

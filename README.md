@@ -16,8 +16,10 @@ Common typo aliases `use agnet teams` and `use agnet team` are also supported.
 
 ## Execution Model
 
-- This project provides orchestration contracts, policies, and team-state runtime tools.
-- Actual worker execution is performed by the host coding agent (for example via spawned sub-agents), not by an internal process scheduler in this repo.
+- Canonical runtime contract: `host_orchestrated_default`.
+- Default behavior uses host-driven orchestration: tool calls, scheduling decisions, and worker lifecycle are driven by the host coding agent.
+- Optional managed runtime mode exists behind explicit runtime configuration (`managed_runtime.enabled=true`) and must be intentionally enabled.
+- In default mode, no implicit runtime worker transport is auto-provisioned.
 - For safe parallel coding, use per-worker git branch/worktree isolation as defined in `skills/agent-teams/SKILL.md`.
 
 ## Use With Any Coding Agent
