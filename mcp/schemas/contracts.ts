@@ -184,7 +184,26 @@ export interface ToolOutputContracts {
   'team_task_claim.schema.json': { ok: boolean; task?: TaskEntityContract; error?: string };
   'team_artifact_publish.schema.json': { ok: boolean; artifact?: ArtifactEntityContract; error?: string };
   'team_plan_fanout.schema.json': { ok: boolean; recommendation?: { recommended_threads: number }; error?: string };
-  'team_trigger.schema.json': { ok: boolean; triggered: boolean; error?: string };
+  'team_trigger.schema.json': {
+    ok: boolean;
+    triggered: boolean;
+    accepted?: boolean;
+    route?: 'agent_teams' | 'normal_mode';
+    parallel_gate?: {
+      passed: boolean;
+      reason_code: string;
+      estimated_parallel_tasks: number;
+      recommended_threads: number;
+      parallel_signal_count: number;
+      sequential_signal_count: number;
+    };
+    recommendation?: {
+      message: string;
+      suggested_mode: 'default';
+      objective: string;
+    };
+    error?: string;
+  };
 }
 
 export const ENTITY_REQUIRED_FIELDS = {

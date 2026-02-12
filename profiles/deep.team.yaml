@@ -9,6 +9,11 @@ fanout:
   medium_max: 4
   high_min: 5
   high_max: 6
+trigger:
+  strict_parallel_gate: true
+  min_threads_for_team: 2
+  min_parallel_signals: 1
+  max_sequential_signals: 0
 budgets:
   token_soft_limit: 22000
   token_hard_limit: 36000

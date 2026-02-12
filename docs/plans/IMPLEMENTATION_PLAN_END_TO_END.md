@@ -1,3 +1,25 @@
+# Continuation Plan: Auto Parallel Gate Fallback (2026-02-12)
+
+Date: 2026-02-12  
+Branch: `codex/auto-parallel-gate-fallback`  
+Execution mode: `single-agent`
+
+## Objective
+
+Add a strict preflight parallelization gate for `team_trigger` so agent teams is only used when work is parallelizable; otherwise route immediately to normal mode with a clear recommendation.
+
+## Tickets
+
+| Ticket ID | Tier | Owner | Scope / Files | Acceptance Criteria | Linked Tests | Status |
+|---|---|---|---|---|---|---|
+| `ATG-P1-001` | P1 | Codex | `mcp/server/parallel-gate.ts`, `mcp/server/tools/trigger.ts` | `team_trigger` evaluates strict gate before `team_start`; rejected requests return `accepted=false`, `route=normal_mode`, and no team startup | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts` | done |
+| `ATG-P1-002` | P1 | Codex | `mcp/schemas/contracts.ts`, `profiles/default.team.yaml`, `profiles/fast.team.yaml`, `profiles/deep.team.yaml` | trigger output contract includes fallback fields (`accepted`, `route`, `parallel_gate`, `recommendation`); profile-driven gate thresholds configured | `node --import tsx --test tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` | done |
+| `ATG-P2-001` | P2 | Codex | `tests/unit/v3-112.parallel-gate.test.ts`, `tests/unit/at015.trigger.test.ts`, `tests/integration/at015.trigger.integration.test.ts`, `tests/integration/v3-109.staffing.integration.test.ts`, `docs/AT-015.md`, `skills/agent-teams/SKILL.md` | unit/integration coverage includes accepted+rejected trigger paths; docs/skill reflect strict gate and normal-mode fallback behavior | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` | done |
+
+## Notes
+
+- Known unrelated baseline issue remains out of scope for this ticket set: `tests/unit/v3-005.git-isolation.test.ts` (`INTEGRATION_WORKTREE_NAME` reference) from prior branch history.
+
 # CTO End-to-End Implementation Plan (Agent Teams Remediation Run)
 
 Date: 2026-02-11
