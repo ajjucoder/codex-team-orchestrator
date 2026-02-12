@@ -306,14 +306,8 @@ export function buildTeamUiState(
   });
 
   const replayWindow = Math.max(120, recentEventLimit * 4, evidenceLimit * 4, failureLimit * 4);
-  const summaryMetrics = readRecord(summary.metrics);
-  const totalReplayEvents = Math.max(
-    replayWindow,
-    Math.floor(Number(summaryMetrics.events ?? 0))
-  );
-  const events = store.replayEvents(teamId, totalReplayEvents);
-  const latestEvents = events.slice(-replayWindow);
-  const eventsDescending = [...latestEvents].reverse();
+  const events = store.replayEventsTail(teamId, replayWindow);
+  const eventsDescending = [...events].reverse();
 
   const recentEvents = eventsDescending
     .slice(0, recentEventLimit)

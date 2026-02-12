@@ -16,6 +16,7 @@ const repoRoot = '.tmp/v3-005-unit-repo';
 const gitRepoRoot = '.tmp/v3-005-unit-git-repo';
 const fallbackRepoRoot = '.tmp/v3-005-unit-fallback-repo';
 const defaultModeWorktreeRoot = '.tmp/v3-005-unit-default-worktrees';
+const nonGitCleanupWorktreeRoot = resolve('.tmp/v3-005-unit-nongit-cleanup-worktrees');
 
 afterEach(() => {
   rmSync(dbPath, { force: true });
@@ -26,6 +27,7 @@ afterEach(() => {
   rmSync(gitRepoRoot, { recursive: true, force: true });
   rmSync(fallbackRepoRoot, { recursive: true, force: true });
   rmSync(defaultModeWorktreeRoot, { recursive: true, force: true });
+  rmSync(nonGitCleanupWorktreeRoot, { recursive: true, force: true });
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -483,4 +485,75 @@ test('V3-005 unit: team_send defaults cwd to assignment and rejects cwd outside 
   assert.equal(Number(rejectedCount?.count ?? 0), 0);
 
   server.store.close();
+});
+
+test('V3-005 unit: inactive team with non-git-managed assignments in git-enabled runtime releases instead of stranding', () => {
+  initGitRepo(gitRepoRoot);
+  const store = new SqliteStore(dbPath);
+  store.migrate();
+  const teamId = 'team_v3_005_unit_nongit_cleanup';
+  createTeamAndAgents(store, teamId);
+
+  const filesystemManager = new RuntimeGitIsolationManager({
+    store,
+    worktreeRoot: nonGitCleanupWorktreeRoot
+  });
+  const allocA = filesystemManager.allocateForAgent({
+    team_id: teamId,
+    agent_id: 'agent_impl',
+    role: 'implementer'
+  });
+  const allocB = filesystemManager.allocateForAgent({
+    team_id: teamId,
+    agent_id: 'agent_review',
+    role: 'reviewer'
+  });
+  assert.equal(allocA.ok, true);
+  assert.equal(allocB.ok, true);
+  assert.equal(allocA.assignment?.git_managed, false);
+  assert.equal(allocB.assignment?.git_managed, false);
+  assert.equal(existsSync(String(allocA.assignment?.worktree_path ?? '')), true);
+  assert.equal(existsSync(String(allocB.assignment?.worktree_path ?? '')), true);
+
+  const gitManager = new RuntimeGitIsolationManager({
+    store,
+    repoRoot: gitRepoRoot,
+    worktreeRoot: nonGitCleanupWorktreeRoot
+  });
+
+  createTask(store, {
+    teamId,
+    taskId: 'task_done_a',
+    requiredRole: 'implementer',
+    claimedBy: 'agent_impl',
+    status: 'done',
+    priority: 1
+  });
+  createTask(store, {
+    teamId,
+    taskId: 'task_done_b',
+    requiredRole: 'reviewer',
+    claimedBy: 'agent_review',
+    status: 'done',
+    priority: 2
+  });
+
+  const finalized = store.updateTeamStatus(teamId, 'finalized');
+  if (!finalized) throw new Error('expected finalized team');
+
+  const cleanup = gitManager.cleanupForTeam(
+    finalized,
+    store.listAgentsByTeam(teamId),
+    store.listTasks(teamId)
+  );
+
+  assert.equal(cleanup.released_count, 2);
+  assert.equal(gitManager.getTeamAssignments(teamId).length, 0);
+  assert.equal(existsSync(String(allocA.assignment?.worktree_path ?? '')), false);
+  assert.equal(existsSync(String(allocB.assignment?.worktree_path ?? '')), false);
+  const integration = asRecord(cleanup.integration);
+  assert.equal(integration.attempted, false);
+  assert.equal(integration.reason, 'non_git_assignments');
+
+  store.close();
 });

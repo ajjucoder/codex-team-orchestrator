@@ -2001,6 +2001,13 @@ export class SqliteStore {
     return rows.map((row) => ({ ...row, payload: parseJSON<Record<string, unknown>>(row.payload_json, {}) }));
   }
 
+  replayEventsTail(teamId: string, limit = 1000): Array<Record<string, unknown>> {
+    const rows = this.db
+      .prepare('SELECT * FROM (SELECT * FROM run_events WHERE team_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC')
+      .all(teamId, limit);
+    return rows.map((row) => ({ ...row, payload: parseJSON<Record<string, unknown>>(row.payload_json, {}) }));
+  }
+
   summarizeTeam(teamId: string): Record<string, unknown> | null {
     const team = this.getTeam(teamId);
     if (!team) return null;

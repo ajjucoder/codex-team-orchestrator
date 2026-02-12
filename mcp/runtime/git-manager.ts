@@ -392,9 +392,16 @@ export class RuntimeGitIsolationManager {
       };
     }
     if (assignments.some((assignment) => assignment.git_managed !== true)) {
+      const cleanup = this.releaseTeamAssignments(team.team_id, `team_${team.status}_non_git`);
+      if (cleanup.released_count > 0 || (cleanup.failed?.length ?? 0) > 0) {
+        this.logTeamEvent(team.team_id, 'git_auto_integration_skipped_non_git_assignments', {
+          team_status: team.status,
+          released_count: cleanup.released_count,
+          failed_count: cleanup.failed?.length ?? 0
+        });
+      }
       return {
-        released_count: 0,
-        released: [],
+        ...cleanup,
         integration: {
           attempted: false,
           succeeded: false,
