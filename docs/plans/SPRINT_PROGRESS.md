@@ -8,8 +8,8 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `0/17 (0.0%)`
-- `P0`: `0/7 (0.0%)`
+- `Overall`: `1/17 (5.9%)`
+- `P0`: `1/7 (14.3%)`
 - `P1`: `0/6 (0.0%)`
 - `P2`: `0/4 (0.0%)`
 
@@ -35,7 +35,7 @@ Formula:
 
 | Ticket | Tier | Status | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
 |---|---|---|---|---|---|---|---|---|
-| `ATX-P0-001` | P0 | in_progress | pending | `T-ATX-P0-001` | pending | pending | pending | pending |
+| `ATX-P0-001` | P0 | done | `README.md`, `docs/proposals/agent-runtime-contract.md`, `docs/codex-agent-teams-ui.md` | `T-ATX-P0-001` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`) | `e12afd7480e875d275097cb6adead190d4e6e232` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P0-002` | P0 | todo | pending | `T-ATX-P0-002` | pending | pending | pending | pending |
 | `ATX-P0-003` | P0 | todo | pending | `T-ATX-P0-003` | pending | pending | pending | pending |
 | `ATX-P0-004` | P0 | todo | pending | `T-ATX-P0-004` | pending | pending | pending | pending |
@@ -63,18 +63,15 @@ A ticket may be marked `done` only if all are present:
 
 ## Test Evidence
 
-- `npm run lint` -> not run (planning session)
-- `npm run test` -> not run (planning session)
-- `npm run typecheck` -> not run (planning session)
+- `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts` -> pass (ticket `ATX-P0-001`)
 
 ## Blockers
 
-- Architecture contract decision is unresolved until `ATX-P0-001` lands; downstream implementation should not start before this.
 - Worker runtime persistence migration (`ATX-P0-003`) is a prerequisite for reliable tmux/headless rollout.
 - Group message idempotency contract (`ATX-P0-006`) must be finalized before implementing `team_group_send`.
 
 ## Next Actions
 
-1. Execute `ATX-P0-001` and secure architecture sign-off on runtime ownership model.
-2. Implement `ATX-P0-002` and `ATX-P0-003` together to avoid non-durable bootstrap paths.
-3. Run foundational P0 test pack and update this tracker with first evidence-backed status transitions.
+1. Execute `ATX-P0-002` transport bootstrap wiring and retain existing default behavior when no transport is configured.
+2. Execute `ATX-P0-003` worker runtime session persistence with migration-backed restart recovery.
+3. Run linked tests per ticket and update this tracker after each status transition.
