@@ -217,3 +217,145 @@ test('V3-110 unit: ui-state replay snapshot remains coherent across repeated rea
     server.store.close();
   }
 });
+
+test('V3-110 unit: ui-state surfaces latest recent/evidence/failure entries after replay window is exceeded', () => {
+  cleanup();
+  const server = createServer({ dbPath, logPath });
+  try {
+    server.start();
+    registerTeamLifecycleTools(server);
+    registerTaskBoardTools(server);
+    registerAgentLifecycleTools(server);
+    registerObservabilityTools(server);
+
+    const started = server.callTool('team_start', {
+      objective: 'ui-state latest slices',
+      max_threads: 2
+    });
+    assert.equal(started.ok, true);
+    const teamId = started.team.team_id as string;
+
+    for (let i = 0; i < 140; i += 1) {
+      server.store.logEvent({
+        team_id: teamId,
+        event_type: 'synthetic_filler',
+        payload: { ok: true, seq: i }
+      });
+    }
+
+    const latestEvidenceTaskId = 'latest-evidence-task';
+    const latestFailureSummary = 'latest-failure-highlight';
+
+    server.store.logEvent({
+      team_id: teamId,
+      event_type: 'tool_call:team_task_update',
+      payload: {
+        ok: true,
+        input: {
+          task_id: latestEvidenceTaskId,
+          status: 'done'
+        }
+      }
+    });
+    server.store.logEvent({
+      team_id: teamId,
+      event_type: 'synthetic_recent_latest',
+      payload: {
+        ok: true
+      }
+    });
+    server.store.logEvent({
+      team_id: teamId,
+      event_type: 'synthetic_error_latest',
+      payload: {
+        ok: false,
+        error: latestFailureSummary
+      }
+    });
+
+    const uiState = server.callTool('team_ui_state', {
+      team_id: teamId,
+      recent_event_limit: 20,
+      evidence_limit: 6,
+      failure_limit: 6
+    });
+    assert.equal(uiState.ok, true);
+
+    const recentEvents = Array.isArray(uiState.recent_events)
+      ? uiState.recent_events.filter((event) => event && typeof event === 'object').map((event) => event as Record<string, unknown>)
+      : [];
+    const evidenceLinks = Array.isArray(uiState.evidence_links)
+      ? uiState.evidence_links.filter((link) => link && typeof link === 'object').map((link) => link as Record<string, unknown>)
+      : [];
+    const failureHighlights = Array.isArray(uiState.failure_highlights)
+      ? uiState.failure_highlights.filter((event) => event && typeof event === 'object').map((event) => event as Record<string, unknown>)
+      : [];
+
+    assert.equal(
+      recentEvents.some((event) => String(event.event_type ?? '') === 'synthetic_recent_latest'),
+      true
+    );
+    assert.equal(
+      evidenceLinks.some((link) => String(link.task_id ?? '') === latestEvidenceTaskId),
+      true
+    );
+    assert.equal(
+      failureHighlights.some((event) => String(event.summary ?? '') === latestFailureSummary),
+      true
+    );
+  } finally {
+    server.store.close();
+  }
+});
+
+test('V3-110 unit: ui-state spawn controls stay enabled when offline agents exist below max thread capacity', () => {
+  cleanup();
+  const server = createServer({ dbPath, logPath });
+  try {
+    server.start();
+    registerTeamLifecycleTools(server);
+    registerTaskBoardTools(server);
+    registerAgentLifecycleTools(server);
+    registerObservabilityTools(server);
+
+    const started = server.callTool('team_start', {
+      objective: 'offline worker spawn capacity',
+      max_threads: 3
+    });
+    assert.equal(started.ok, true);
+    const teamId = started.team.team_id as string;
+
+    const lead = server.callTool('team_spawn', { team_id: teamId, role: 'lead' });
+    const implementer = server.callTool('team_spawn', { team_id: teamId, role: 'implementer' });
+    const reviewer = server.callTool('team_spawn', { team_id: teamId, role: 'reviewer' });
+    assert.equal(lead.ok, true);
+    assert.equal(implementer.ok, true);
+    assert.equal(reviewer.ok, true);
+
+    const openTask = server.callTool('team_task_create', {
+      team_id: teamId,
+      title: 'open-ui-task',
+      priority: 1,
+      required_role: 'tester'
+    });
+    assert.equal(openTask.ok, true);
+
+    const offlineLead = server.store.updateAgentStatus(lead.agent.agent_id as string, 'offline');
+    const offlineReviewer = server.store.updateAgentStatus(reviewer.agent.agent_id as string, 'offline');
+    assert.equal(offlineLead?.status, 'offline');
+    assert.equal(offlineReviewer?.status, 'offline');
+
+    const uiState = server.callTool('team_ui_state', { team_id: teamId });
+    assert.equal(uiState.ok, true);
+
+    const workerSummary = asRecord(asRecord(uiState.workers).summary);
+    const enabledControls = asRecord(asRecord(uiState.controls).enabled);
+
+    assert.equal(Number(workerSummary.active ?? -1), 1);
+    assert.equal(Number(workerSummary.offline ?? -1), 2);
+    assert.equal(enabledControls.team_spawn, true);
+    assert.equal(enabledControls.team_spawn_ready_roles, true);
+  } finally {
+    server.store.close();
+  }
+});

@@ -191,6 +191,13 @@ test('V3-110 integration: ui-state tools reflect pause/resume transitions withou
     assert.equal(pausedStatus.team.status, 'finalized');
     assert.equal(pausedSummary.summary.status, 'finalized');
 
+    const finalizedUiState = server.callTool('team_ui_state', { team_id: teamId });
+    assert.equal(finalizedUiState.ok, true);
+    assert.equal(finalizedUiState.team.status, 'finalized');
+    const finalizedControls = asRecord(finalizedUiState.controls);
+    const finalizedEnabled = asRecord(finalizedControls.enabled);
+    assert.equal(finalizedEnabled.team_resume, true);
+
     const resumed = server.callTool('team_resume', { team_id: teamId });
     assert.equal(resumed.ok, true);
 

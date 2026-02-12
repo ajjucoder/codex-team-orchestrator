@@ -237,12 +237,15 @@ function buildControls(
   teamStatus: string,
   maxThreads: number,
   workerCount: number,
+  nonOfflineWorkerCount: number,
   taskCounts: Record<string, number>,
   recoverySnapshot: ReturnType<SqliteStore['buildRecoverySnapshot']>
 ): Record<string, unknown> {
-  const isTerminal = teamStatus === 'finalized' || teamStatus === 'archived';
+  const isFinalized = teamStatus === 'finalized';
+  const isArchived = teamStatus === 'archived';
+  const isTerminal = isFinalized || isArchived;
   const isActive = teamStatus === 'active';
-  const hasCapacity = workerCount < Math.max(1, maxThreads);
+  const hasCapacity = nonOfflineWorkerCount < Math.max(1, maxThreads);
   const hasOpenTasks = Math.max(
     0,
     taskCounts.todo
@@ -262,7 +265,7 @@ function buildControls(
     || taskCounts.failed_terminal > 0;
 
   const enabled: Record<string, boolean> = {
-    team_resume: !isTerminal && !isActive,
+    team_resume: isFinalized,
     team_finalize: !isTerminal,
     team_spawn: isActive && hasCapacity,
     team_spawn_ready_roles: isActive && hasCapacity && hasOpenTasks,
@@ -303,8 +306,14 @@ export function buildTeamUiState(
   });
 
   const replayWindow = Math.max(120, recentEventLimit * 4, evidenceLimit * 4, failureLimit * 4);
-  const events = store.replayEvents(teamId, replayWindow);
-  const eventsDescending = [...events].reverse();
+  const summaryMetrics = readRecord(summary.metrics);
+  const totalReplayEvents = Math.max(
+    replayWindow,
+    Math.floor(Number(summaryMetrics.events ?? 0))
+  );
+  const events = store.replayEvents(teamId, totalReplayEvents);
+  const latestEvents = events.slice(-replayWindow);
+  const eventsDescending = [...latestEvents].reverse();
 
   const recentEvents = eventsDescending
     .slice(0, recentEventLimit)
@@ -412,6 +421,13 @@ export function buildTeamUiState(
     recent_events: recentEvents,
     evidence_links: evidenceLinks,
     failure_highlights: failureHighlights,
-    controls: buildControls(team.status, team.max_threads, agents.length, taskCounts, recoverySnapshot)
+    controls: buildControls(
+      team.status,
+      team.max_threads,
+      agents.length,
+      agents.filter((agent) => agent.status !== 'offline').length,
+      taskCounts,
+      recoverySnapshot
+    )
   };
 }
