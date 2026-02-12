@@ -1,3 +1,45 @@
+# Sprint Progress (Auto Parallel Gate Fallback)
+
+Date: 2026-02-12  
+Branch: `codex/auto-parallel-gate-fallback`  
+Execution Mode: `single-agent`
+
+## Ticket Status
+
+| Ticket | Tier | Status | Linked Test Evidence |
+|---|---|---|---|
+| `ATG-P1-001` | P1 | done | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts` (pass), `node --import tsx --test tests/integration/at015.trigger.integration.test.ts` (pass) |
+| `ATG-P1-002` | P1 | done | `node --import tsx --test tests/unit/at015.trigger.test.ts` (pass), `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` (pass) |
+| `ATG-P2-001` | P2 | done | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts` (pass), `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` (pass) |
+
+## Completion Summary
+
+- `Overall`: `3/3 (100.0%)`
+- `P0`: `0/0 (0.0%)`
+- `P1`: `2/2 (100.0%)`
+- `P2`: `1/1 (100.0%)`
+
+Formula:
+- `overall_completion_pct = done_tickets / total_tickets * 100`
+- `p0_completion_pct = done_p0 / total_p0 * 100`
+- `p1_completion_pct = done_p1 / total_p1 * 100`
+- `p2_completion_pct = done_p2 / total_p2 * 100`
+
+## Test Evidence
+
+- `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts` -> pass (`12/12`)
+- `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` -> pass (`6/6`)
+
+## Blockers
+
+- None for this ticket set.
+
+## Next Actions
+
+1. Keep all follow-up changes on `codex/auto-parallel-gate-fallback` (some test paths can switch HEAD if broader suites are invoked).
+2. Commit this ticket set and push branch for review.
+3. Optionally add a lightweight guard in test harness to prevent unintended branch switches during focused runs.
+
 # Sprint Progress (Agent Teams)
 
 Date: 2026-02-11

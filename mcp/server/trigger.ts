@@ -3,7 +3,9 @@ export const TRIGGER_PHRASE_ALIASES = [
   REQUIRED_TRIGGER_PHRASE,
   'use agent teams',
   'use agnet teams',
-  'use agnet team'
+  'use agnet team',
+  '$agent-teams',
+  '/agent-teams/skill'
 ] as const;
 
 type TaskSize = 'small' | 'medium' | 'high';

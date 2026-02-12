@@ -54,6 +54,20 @@ Notes:
 - Agent-team communication and coordination verification:
   - `docs/agent-teams-verification.md`
 
+## Main Branch Consolidation
+
+- CTO consolidation reference for what is now on `main`:
+  - `docs/MAIN_BRANCH_CTO_CONSOLIDATION.md`
+
+## Agent Teams Hybrid UI Docs
+
+- UI/CLI verification report (Codex App + CLI):
+  - `docs/AGENT_TEAMS_UI_CLI_VERIFICATION_REPORT_2026-02-12.md`
+- Industry practices guide:
+  - `docs/AGENT_TEAMS_INDUSTRY_PRACTICES.md`
+- Release catalog:
+  - `docs/RELEASE_CATALOG_AGENT_TEAMS_HYBRID_UI.md`
+
 ## Quick Start
 
 ```bash

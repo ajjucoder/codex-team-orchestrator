@@ -148,6 +148,15 @@ export interface ToolInputContracts {
   'team_resume.schema.json': { team_id: string };
   'team_role_catalog.schema.json': { team_id: string };
   'team_run_summary.schema.json': { team_id: string };
+  'team_staff_plan.schema.json': {
+    team_id?: string;
+    objective?: string;
+    prompt?: string;
+    task_size?: 'small' | 'medium' | 'high';
+    max_threads?: number;
+    estimated_parallel_tasks?: number;
+    preferred_threads?: number;
+  };
   'team_send.schema.json': { team_id: string; from_agent_id: string; to_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
   'team_spawn.schema.json': { team_id: string; role: string; model?: string };
   'team_spawn_ready_roles.schema.json': { team_id: string; max_new_agents?: number };
@@ -163,6 +172,7 @@ export interface ToolInputContracts {
   'team_task_next.schema.json': { team_id: string; limit?: number; for_agent_id?: string };
   'team_task_update.schema.json': { team_id: string; task_id: string; expected_lock_version: number; status?: TaskStatusContract; description?: string; priority?: number; required_role?: string; risk_tier?: 'P0' | 'P1' | 'P2'; depends_on_task_ids?: string[]; quality_checks_passed?: boolean; artifact_refs_count?: number; compliance_ack?: boolean };
   'team_trigger.schema.json': { prompt: string; profile?: string; task_size?: 'small' | 'medium' | 'high'; max_threads?: number; auto_spawn?: boolean; estimated_parallel_tasks?: number; budget_tokens_remaining?: number; token_cost_per_agent?: number; active_session_model?: string };
+  'team_ui_state.schema.json': { team_id: string; recent_event_limit?: number; evidence_limit?: number; failure_limit?: number };
 }
 
 export interface ToolOutputContracts {
@@ -174,7 +184,26 @@ export interface ToolOutputContracts {
   'team_task_claim.schema.json': { ok: boolean; task?: TaskEntityContract; error?: string };
   'team_artifact_publish.schema.json': { ok: boolean; artifact?: ArtifactEntityContract; error?: string };
   'team_plan_fanout.schema.json': { ok: boolean; recommendation?: { recommended_threads: number }; error?: string };
-  'team_trigger.schema.json': { ok: boolean; triggered: boolean; error?: string };
+  'team_trigger.schema.json': {
+    ok: boolean;
+    triggered: boolean;
+    accepted?: boolean;
+    route?: 'agent_teams' | 'normal_mode';
+    parallel_gate?: {
+      passed: boolean;
+      reason_code: string;
+      estimated_parallel_tasks: number;
+      recommended_threads: number;
+      parallel_signal_count: number;
+      sequential_signal_count: number;
+    };
+    recommendation?: {
+      message: string;
+      suggested_mode: 'default';
+      objective: string;
+    };
+    error?: string;
+  };
 }
 
 export const ENTITY_REQUIRED_FIELDS = {
@@ -214,6 +243,7 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_resume.schema.json': ['team_id'],
   'team_role_catalog.schema.json': ['team_id'],
   'team_run_summary.schema.json': ['team_id'],
+  'team_staff_plan.schema.json': [],
   'team_send.schema.json': ['team_id', 'from_agent_id', 'to_agent_id', 'summary', 'idempotency_key'],
   'team_spawn.schema.json': ['team_id', 'role'],
   'team_spawn_ready_roles.schema.json': ['team_id'],
@@ -228,5 +258,6 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_task_list.schema.json': ['team_id'],
   'team_task_next.schema.json': ['team_id'],
   'team_task_update.schema.json': ['team_id', 'task_id', 'expected_lock_version'],
-  'team_trigger.schema.json': ['prompt']
+  'team_trigger.schema.json': ['prompt'],
+  'team_ui_state.schema.json': ['team_id']
 } as const satisfies Record<keyof ToolInputContracts, readonly string[]>;

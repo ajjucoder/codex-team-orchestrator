@@ -675,6 +675,24 @@ export class SqliteStore {
     return rows.map((row) => ({ ...row, metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}) })) as AgentRecord[];
   }
 
+  updateAgentMetadata(agentId: string, metadataPatch: Record<string, unknown>): AgentRecord | null {
+    const agent = this.getAgent(agentId);
+    if (!agent) return null;
+
+    const mergedMetadata = {
+      ...(agent.metadata ?? {}),
+      ...metadataPatch
+    };
+    const updatedAt = nowIso();
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare('UPDATE agents SET metadata_json = ?, updated_at = ? WHERE agent_id = ?')
+        .run(JSON.stringify(mergedMetadata), updatedAt, agentId);
+    });
+    return this.getAgent(agentId);
+  }
+
   updateAgentStatus(agentId: string, status: AgentRecord['status']): AgentRecord | null {
     this.runWithRetry(() => {
       this.db.prepare('UPDATE agents SET status = ?, updated_at = ? WHERE agent_id = ?').run(status, nowIso(), agentId);
@@ -1979,6 +1997,13 @@ export class SqliteStore {
   replayEvents(teamId: string, limit = 1000): Array<Record<string, unknown>> {
     const rows = this.db
       .prepare('SELECT * FROM run_events WHERE team_id = ? ORDER BY id ASC LIMIT ?')
+      .all(teamId, limit);
+    return rows.map((row) => ({ ...row, payload: parseJSON<Record<string, unknown>>(row.payload_json, {}) }));
+  }
+
+  replayEventsTail(teamId: string, limit = 1000): Array<Record<string, unknown>> {
+    const rows = this.db
+      .prepare('SELECT * FROM (SELECT * FROM run_events WHERE team_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC')
       .all(teamId, limit);
     return rows.map((row) => ({ ...row, payload: parseJSON<Record<string, unknown>>(row.payload_json, {}) }));
   }

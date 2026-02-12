@@ -135,7 +135,7 @@ export class RuntimeScheduler {
       const cleanedFromActive = teamTicks
         .reduce((acc, teamTick) => acc + teamTick.cleaned_assignments, 0);
       const cleanedFromInactive = inactiveTeams.reduce((acc, team) => {
-        const cleanup = this.gitManager.releaseTeamAssignments(team.team_id, `team_${team.status}`);
+        const cleanup = this.gitManager.cleanupInactiveTeam(team, this.store.listTasks(team.team_id));
         return acc + cleanup.released_count;
       }, 0);
       const cleanedCount = cleanedFromActive + cleanedFromInactive;

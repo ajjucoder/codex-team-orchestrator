@@ -51,16 +51,39 @@ test('AT-015 trigger tool starts team automatically', () => {
   registerTriggerTools(server);
 
   const result = server.callTool('team_trigger', {
-    prompt: 'use agent teams build release candidate',
+    prompt: 'use agent teams build release candidate across modules with parallel streams',
     profile: 'fast',
     active_session_model: 'gpt-5-codex'
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.triggered, true);
+  assert.equal(result.accepted, true);
+  assert.equal(result.route, 'agent_teams');
   assert.match(result.team.team_id, /^team_/);
   assert.equal(result.team.session_model, 'gpt-5-codex');
   assert.equal(result.orchestration.auto_spawn_enabled, true);
+
+  server.store.close();
+});
+
+test('AT-015 trigger routes non-parallel prompt to normal mode with no team startup', () => {
+  const server = createServer({ dbPath, logPath });
+  server.start();
+  registerTeamLifecycleTools(server);
+  registerTriggerTools(server);
+
+  const result = server.callTool('team_trigger', {
+    prompt: 'use agent teams tiny one file typo fix',
+    profile: 'default'
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.triggered, true);
+  assert.equal(result.accepted, false);
+  assert.equal(result.route, 'normal_mode');
+  assert.equal(result.team, undefined);
+  assert.equal(result.parallel_gate.passed, false);
 
   server.store.close();
 });
@@ -122,7 +145,7 @@ test('AT-015 trigger uses telemetry budget estimator by default when token_cost_
   }
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agent teams plan medium implementation and tests',
+    prompt: 'use agent teams plan medium implementation and tests across modules with parallel validation',
     profile: 'default',
     task_size: 'medium',
     auto_spawn: false,
@@ -176,7 +199,7 @@ test('AT-015 trigger prefers DAG-ready role spawn strategy when available', () =
   }));
 
   const triggered = server.callTool('team_trigger', {
-    prompt: 'use agent teams run dag shaped staffing',
+    prompt: 'use agent teams run dag shaped staffing with parallel streams',
     profile: 'default',
     max_threads: 4
   });

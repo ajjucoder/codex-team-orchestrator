@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { AgentRecord, TaskRecord, TeamRecord } from '../store/entities.js';
@@ -7,6 +8,7 @@ const DEFAULT_WORKTREE_ROOT = '.tmp/agent-teams';
 const DEFAULT_BRANCH_PREFIX = 'team';
 const DEFAULT_METADATA_KEY = 'runtime_git_isolation';
 const MAX_RELEASE_HISTORY = 100;
+const TERMINAL_TASK_STATUSES = new Set<string>(['done', 'cancelled']);
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -69,6 +71,7 @@ export interface GitIsolationAssignment {
   slot: number;
   branch: string;
   worktree_path: string;
+  git_managed: boolean;
   assigned_at: string;
   last_seen_at: string;
 }
@@ -95,6 +98,8 @@ export interface GitIsolationAllocationResult {
 export interface GitIsolationCleanupResult {
   released_count: number;
   released: GitIsolationReleaseRecord[];
+  failed?: GitIsolationCleanupFailure[];
+  integration?: GitIsolationIntegrationOutcome;
 }
 
 export interface GitIsolationGuardResult {
@@ -103,10 +108,28 @@ export interface GitIsolationGuardResult {
   error?: string;
 }
 
+export interface GitIsolationCleanupFailure {
+  team_id: string;
+  agent_id: string;
+  branch: string;
+  worktree_path: string;
+  error: string;
+}
+
+export interface GitIsolationIntegrationOutcome {
+  attempted: boolean;
+  succeeded: boolean;
+  reason?: string;
+  target_branch?: string;
+  merged_branches?: string[];
+  error?: string;
+}
+
 export interface RuntimeGitIsolationManagerOptions {
   store: SqliteStore;
   repoRoot?: string;
   worktreeRoot?: string;
+  enableGitOperations?: boolean;
   branchPrefix?: string;
   metadataKey?: string;
   runIdFactory?: (teamId: string) => string;
@@ -122,6 +145,7 @@ function normalizeAssignment(raw: Record<string, unknown>): GitIsolationAssignme
   const assignedAt = readString(raw.assigned_at).trim();
   const lastSeenAt = readString(raw.last_seen_at).trim();
   const slot = readNumber(raw.slot, 0);
+  const gitManaged = raw.git_managed === true;
   if (!teamId || !agentId || !role || !runId || !branch || !worktreePath || slot < 1) {
     return null;
   }
@@ -133,6 +157,7 @@ function normalizeAssignment(raw: Record<string, unknown>): GitIsolationAssignme
     slot,
     branch,
     worktree_path: resolve(worktreePath),
+    git_managed: gitManaged,
     assigned_at: assignedAt || nowIso(),
     last_seen_at: lastSeenAt || assignedAt || nowIso()
   };
@@ -157,14 +182,18 @@ export class RuntimeGitIsolationManager {
   readonly branchPrefix: string;
   readonly metadataKey: string;
   readonly runIdFactory: (teamId: string) => string;
+  readonly enableGitOperations: boolean;
+  private gitRepoStatus: boolean | null;
 
   constructor(options: RuntimeGitIsolationManagerOptions) {
     this.store = options.store;
     this.repoRoot = resolve(options.repoRoot ?? process.cwd());
     this.worktreeRoot = resolve(this.repoRoot, options.worktreeRoot ?? DEFAULT_WORKTREE_ROOT);
+    this.enableGitOperations = options.enableGitOperations ?? options.repoRoot !== undefined;
     this.branchPrefix = sanitizeSegment(options.branchPrefix ?? DEFAULT_BRANCH_PREFIX, DEFAULT_BRANCH_PREFIX);
     this.metadataKey = options.metadataKey ?? DEFAULT_METADATA_KEY;
     this.runIdFactory = options.runIdFactory ?? defaultRunId;
+    this.gitRepoStatus = null;
   }
 
   allocateForAgent({
@@ -188,14 +217,17 @@ export class RuntimeGitIsolationManager {
     const state = this.readOrCreateState(team);
     const existing = state.assignments[agent_id];
     if (existing) {
+      const prepared = this.ensureAssignmentWorkspace(existing, false);
+      if (!prepared.ok) {
+        return { ok: false, error: prepared.error ?? `failed to restore assignment for ${agent_id}` };
+      }
+      existing.git_managed = prepared.git_managed;
       existing.last_seen_at = nowIso();
       this.persistState(team_id, state);
-      if (!existsSync(existing.worktree_path)) {
-        mkdirSync(existing.worktree_path, { recursive: true });
-      }
       return { ok: true, assignment: existing };
     }
 
+    const gitRepo = this.isGitRepoRoot();
     const roleKey = sanitizeSegment(role, 'worker');
     const namesInUse = new Set(
       Object.values(state.assignments).map((assignment) => `${assignment.branch}::${assignment.worktree_path}`)
@@ -208,13 +240,19 @@ export class RuntimeGitIsolationManager {
       branch = `${this.branchPrefix}/${state.run_id}/${workerName}`;
       worktreePath = resolve(this.worktreeRoot, state.run_id, workerName);
       const pairKey = `${branch}::${worktreePath}`;
+      if (namesInUse.has(pairKey) || existsSync(worktreePath)) {
+        slot += 1;
+        continue;
+      }
+      if (gitRepo && this.gitBranchExists(branch)) {
+        slot += 1;
+        continue;
+      }
       if (!namesInUse.has(pairKey) && !existsSync(worktreePath)) {
         break;
       }
       slot += 1;
     }
-
-    mkdirSync(worktreePath, { recursive: true });
     const assignedAt = nowIso();
     const assignment: GitIsolationAssignment = {
       team_id,
@@ -224,9 +262,17 @@ export class RuntimeGitIsolationManager {
       slot,
       branch,
       worktree_path: worktreePath,
+      git_managed: false,
       assigned_at: assignedAt,
       last_seen_at: assignedAt
     };
+
+    const prepared = this.ensureAssignmentWorkspace(assignment, true);
+    if (!prepared.ok) {
+      return { ok: false, error: prepared.error ?? `failed to prepare assignment for ${agent_id}` };
+    }
+    assignment.git_managed = prepared.git_managed;
+
     state.assignments[agent_id] = assignment;
     state.next_slot_by_role[roleKey] = slot;
     state.updated_at = assignedAt;
@@ -267,25 +313,14 @@ export class RuntimeGitIsolationManager {
     const assignment = state.assignments[agentId];
     if (!assignment) return { released_count: 0, released: [] };
 
-    const releasedAt = nowIso();
-    const released: GitIsolationReleaseRecord = {
-      ...assignment,
-      released_at: releasedAt,
-      reason
-    };
-
-    safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
-    delete state.assignments[agentId];
-    state.released.push(released);
-    if (state.released.length > MAX_RELEASE_HISTORY) {
-      state.released = state.released.slice(state.released.length - MAX_RELEASE_HISTORY);
+    const cleanup = this.releaseAssignments(teamId, state, [assignment], reason);
+    if ((cleanup.failed?.length ?? 0) > 0) {
+      this.logTeamEvent(teamId, 'git_assignment_cleanup_failed', {
+        reason,
+        failed: cleanup.failed
+      });
     }
-    state.updated_at = releasedAt;
-    this.persistState(teamId, state);
-    return {
-      released_count: 1,
-      released: [released]
-    };
+    return cleanup;
   }
 
   cleanupOrphanAssignments({
@@ -299,73 +334,127 @@ export class RuntimeGitIsolationManager {
   }): GitIsolationCleanupResult {
     const state = this.readState(team_id);
     if (!state) return { released_count: 0, released: [] };
-
-    const released: GitIsolationReleaseRecord[] = [];
-    for (const assignment of Object.values(state.assignments)) {
-      if (active_agent_ids.has(assignment.agent_id)) {
-        continue;
-      }
-      const releasedAt = nowIso();
-      released.push({
-        ...assignment,
-        released_at: releasedAt,
-        reason
-      });
-      safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
-      delete state.assignments[assignment.agent_id];
-    }
-
-    if (released.length === 0) {
-      return { released_count: 0, released: [] };
-    }
-
-    state.released.push(...released);
-    if (state.released.length > MAX_RELEASE_HISTORY) {
-      state.released = state.released.slice(state.released.length - MAX_RELEASE_HISTORY);
-    }
-    state.updated_at = nowIso();
-    this.persistState(team_id, state);
-    return {
-      released_count: released.length,
-      released
-    };
+    const releasable = Object.values(state.assignments).filter((assignment) => !active_agent_ids.has(assignment.agent_id));
+    return this.releaseAssignments(team_id, state, releasable, reason);
   }
 
   releaseTeamAssignments(teamId: string, reason = 'team_inactive'): GitIsolationCleanupResult {
     const state = this.readState(teamId);
     if (!state) return { released_count: 0, released: [] };
+    return this.releaseAssignments(teamId, state, Object.values(state.assignments), reason);
+  }
 
-    const released: GitIsolationReleaseRecord[] = [];
-    for (const assignment of Object.values(state.assignments)) {
-      const releasedAt = nowIso();
-      released.push({
-        ...assignment,
-        released_at: releasedAt,
-        reason
-      });
-      safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
+  cleanupInactiveTeam(team: TeamRecord, tasks: TaskRecord[]): GitIsolationCleanupResult {
+    if (team.status === 'active') {
+      return { released_count: 0, released: [] };
+    }
+    if (team.status === 'paused') {
+      return {
+        released_count: 0,
+        released: [],
+        integration: {
+          attempted: false,
+          succeeded: false,
+          reason: 'paused'
+        }
+      };
     }
 
-    if (released.length === 0) {
+    const state = this.readState(team.team_id);
+    if (!state) return { released_count: 0, released: [] };
+    const assignments = Object.values(state.assignments);
+    if (assignments.length === 0) {
       return { released_count: 0, released: [] };
     }
 
-    state.assignments = {};
-    state.released.push(...released);
-    if (state.released.length > MAX_RELEASE_HISTORY) {
-      state.released = state.released.slice(state.released.length - MAX_RELEASE_HISTORY);
+    if (!this.isGitRepoRoot()) {
+      const cleanup = this.releaseTeamAssignments(team.team_id, `team_${team.status}`);
+      if (cleanup.released_count > 0 || (cleanup.failed?.length ?? 0) > 0) {
+        this.logTeamEvent(team.team_id, 'git_auto_integration_skipped_non_git', {
+          team_status: team.status,
+          released_count: cleanup.released_count,
+          failed_count: cleanup.failed?.length ?? 0
+        });
+      }
+      return cleanup;
     }
-    state.updated_at = nowIso();
-    this.persistState(teamId, state);
+
+    const openTaskCount = tasks.reduce((count, task) => count + (this.isOpenTask(task) ? 1 : 0), 0);
+    if (openTaskCount > 0) {
+      return {
+        released_count: 0,
+        released: [],
+        integration: {
+          attempted: false,
+          succeeded: false,
+          reason: 'open_tasks'
+        }
+      };
+    }
+    if (assignments.some((assignment) => assignment.git_managed !== true)) {
+      const cleanup = this.releaseTeamAssignments(team.team_id, `team_${team.status}_non_git`);
+      if (cleanup.released_count > 0 || (cleanup.failed?.length ?? 0) > 0) {
+        this.logTeamEvent(team.team_id, 'git_auto_integration_skipped_non_git_assignments', {
+          team_status: team.status,
+          released_count: cleanup.released_count,
+          failed_count: cleanup.failed?.length ?? 0
+        });
+      }
+      return {
+        ...cleanup,
+        integration: {
+          attempted: false,
+          succeeded: false,
+          reason: 'non_git_assignments'
+        }
+      };
+    }
+
+    const integration = this.integrateAssignments(assignments);
+    if (!integration.ok) {
+      this.logTeamEvent(team.team_id, 'git_auto_integration_failed', {
+        team_status: team.status,
+        target_branch: integration.target_branch,
+        merged_branches: integration.merged_branches,
+        error: integration.error
+      });
+      return {
+        released_count: 0,
+        released: [],
+        integration: {
+          attempted: true,
+          succeeded: false,
+          target_branch: integration.target_branch,
+          merged_branches: integration.merged_branches,
+          error: integration.error
+        }
+      };
+    }
+
+    const cleanup = this.releaseTeamAssignments(team.team_id, 'team_completed_integrated');
+    const failedCount = cleanup.failed?.length ?? 0;
+    this.logTeamEvent(team.team_id, failedCount > 0 ? 'git_auto_integration_partial_cleanup' : 'git_auto_integration_succeeded', {
+      team_status: team.status,
+      target_branch: integration.target_branch,
+      merged_branches: integration.merged_branches,
+      released_count: cleanup.released_count,
+      failed_count: failedCount
+    });
     return {
-      released_count: released.length,
-      released
+      ...cleanup,
+      integration: {
+        attempted: true,
+        succeeded: failedCount === 0,
+        reason: failedCount > 0 ? 'cleanup_failed' : 'completed',
+        target_branch: integration.target_branch,
+        merged_branches: integration.merged_branches
+      }
     };
   }
 
   cleanupForTeam(team: TeamRecord, agents: AgentRecord[], tasks: TaskRecord[]): GitIsolationCleanupResult {
     if (team.status !== 'active') {
-      return this.releaseTeamAssignments(team.team_id, `team_${team.status}`);
+      return this.cleanupInactiveTeam(team, tasks);
     }
 
     const activeAgentIds = new Set<string>();
@@ -452,4 +541,298 @@ export class RuntimeGitIsolationManager {
     metadataPatch[this.metadataKey] = state;
     this.store.updateTeamMetadata(teamId, metadataPatch);
   }
+
+  private isGitRepoRoot(): boolean {
+    if (!this.enableGitOperations) {
+      return false;
+    }
+    if (this.gitRepoStatus !== null) {
+      return this.gitRepoStatus;
+    }
+    const probe = this.runGit(['rev-parse', '--is-inside-work-tree']);
+    this.gitRepoStatus = probe.ok && probe.stdout.trim() === 'true';
+    return this.gitRepoStatus;
+  }
+
+  private runGit(args: string[], cwd = this.repoRoot): GitCommandResult {
+    const command = `git ${args.join(' ')}`;
+    const result = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8'
+    });
+    const stdout = readString(result.stdout).trim();
+    const stderr = readString(result.stderr).trim();
+    const code = typeof result.status === 'number' ? result.status : null;
+    if (result.error) {
+      return {
+        ok: false,
+        code,
+        stdout,
+        stderr,
+        command,
+        error: String(result.error.message ?? result.error)
+      };
+    }
+    return {
+      ok: code === 0,
+      code,
+      stdout,
+      stderr,
+      command
+    };
+  }
+
+  private formatGitError(result: GitCommandResult, fallback: string): string {
+    const err = result.stderr || result.error || fallback;
+    return `${result.command} failed: ${err}`;
+  }
+
+  private gitBranchExists(branch: string): boolean {
+    if (!this.isGitRepoRoot()) return false;
+    const result = this.runGit(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+    return result.ok;
+  }
+
+  private ensureAssignmentWorkspace(
+    assignment: GitIsolationAssignment,
+    createBranch: boolean
+  ): { ok: boolean; git_managed: boolean; error?: string } {
+    if (!isPathWithin(assignment.worktree_path, this.worktreeRoot)) {
+      return {
+        ok: false,
+        git_managed: false,
+        error: `worktree path ${assignment.worktree_path} is outside root ${this.worktreeRoot}`
+      };
+    }
+    if (existsSync(assignment.worktree_path)) {
+      return { ok: true, git_managed: assignment.git_managed };
+    }
+    if (!this.isGitRepoRoot()) {
+      mkdirSync(assignment.worktree_path, { recursive: true });
+      return { ok: true, git_managed: false };
+    }
+
+    mkdirSync(resolve(assignment.worktree_path, '..'), { recursive: true });
+    if (!assignment.git_managed && !createBranch) {
+      mkdirSync(assignment.worktree_path, { recursive: true });
+      return { ok: true, git_managed: false };
+    }
+    if (createBranch) {
+      if (this.gitBranchExists(assignment.branch)) {
+        const attached = this.runGit(['worktree', 'add', assignment.worktree_path, assignment.branch]);
+        if (attached.ok) {
+          return { ok: true, git_managed: true };
+        }
+      }
+      const created = this.runGit(['worktree', 'add', '-b', assignment.branch, assignment.worktree_path, 'HEAD']);
+      if (!created.ok) {
+        // Fail-open to filesystem isolation if git worktree branch allocation is unavailable.
+        mkdirSync(assignment.worktree_path, { recursive: true });
+        return { ok: true, git_managed: false };
+      }
+      return { ok: true, git_managed: true };
+    }
+
+    if (!this.gitBranchExists(assignment.branch)) {
+      mkdirSync(assignment.worktree_path, { recursive: true });
+      return { ok: true, git_managed: false };
+    }
+    const attached = this.runGit(['worktree', 'add', assignment.worktree_path, assignment.branch]);
+    if (!attached.ok) {
+      mkdirSync(assignment.worktree_path, { recursive: true });
+      return { ok: true, git_managed: false };
+    }
+    return { ok: true, git_managed: true };
+  }
+
+  private cleanupAssignmentWorkspace(assignment: GitIsolationAssignment): { ok: boolean; error?: string } {
+    if (!isPathWithin(assignment.worktree_path, this.worktreeRoot)) {
+      return {
+        ok: false,
+        error: `worktree path ${assignment.worktree_path} is outside root ${this.worktreeRoot}`
+      };
+    }
+
+    if (!this.isGitRepoRoot() || !assignment.git_managed) {
+      const removed = safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
+      if (!removed) {
+        return {
+          ok: false,
+          error: `refused to remove worktree outside root: ${assignment.worktree_path}`
+        };
+      }
+      return { ok: true };
+    }
+
+    if (existsSync(assignment.worktree_path)) {
+      const removedWorktree = this.runGit(['worktree', 'remove', '--force', assignment.worktree_path]);
+      if (!removedWorktree.ok) {
+        const removed = safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
+        if (!removed) {
+          return {
+            ok: false,
+            error: this.formatGitError(removedWorktree, `failed to remove worktree ${assignment.worktree_path}`)
+          };
+        }
+      }
+    }
+    this.runGit(['worktree', 'prune']);
+
+    if (this.gitBranchExists(assignment.branch)) {
+      const deletedBranch = this.runGit(['branch', '-D', assignment.branch]);
+      if (!deletedBranch.ok) {
+        return {
+          ok: false,
+          error: this.formatGitError(deletedBranch, `failed to delete branch ${assignment.branch}`)
+        };
+      }
+    }
+
+    if (existsSync(assignment.worktree_path)) {
+      safeRemoveWorktree(assignment.worktree_path, this.worktreeRoot);
+    }
+    return { ok: true };
+  }
+
+  private releaseAssignments(
+    teamId: string,
+    state: TeamIsolationState,
+    assignments: GitIsolationAssignment[],
+    reason: string
+  ): GitIsolationCleanupResult {
+    if (assignments.length === 0) {
+      return { released_count: 0, released: [] };
+    }
+
+    const released: GitIsolationReleaseRecord[] = [];
+    const failed: GitIsolationCleanupFailure[] = [];
+
+    for (const assignment of assignments) {
+      const cleaned = this.cleanupAssignmentWorkspace(assignment);
+      if (!cleaned.ok) {
+        failed.push({
+          team_id: assignment.team_id,
+          agent_id: assignment.agent_id,
+          branch: assignment.branch,
+          worktree_path: assignment.worktree_path,
+          error: cleaned.error ?? 'cleanup failed'
+        });
+        continue;
+      }
+      const releasedAt = nowIso();
+      const releaseRecord: GitIsolationReleaseRecord = {
+        ...assignment,
+        released_at: releasedAt,
+        reason
+      };
+      delete state.assignments[assignment.agent_id];
+      released.push(releaseRecord);
+    }
+
+    if (released.length > 0) {
+      state.released.push(...released);
+      if (state.released.length > MAX_RELEASE_HISTORY) {
+        state.released = state.released.slice(state.released.length - MAX_RELEASE_HISTORY);
+      }
+      state.updated_at = nowIso();
+      this.persistState(teamId, state);
+    }
+
+    const result: GitIsolationCleanupResult = {
+      released_count: released.length,
+      released
+    };
+    if (failed.length > 0) {
+      result.failed = failed;
+    }
+    return result;
+  }
+
+  private isOpenTask(task: TaskRecord): boolean {
+    return !TERMINAL_TASK_STATUSES.has(String(task.status));
+  }
+
+  private integrateAssignments(assignments: GitIsolationAssignment[]): IntegrationAttemptResult {
+    const branchResult = this.runGit(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (!branchResult.ok || !branchResult.stdout) {
+      return {
+        ok: false,
+        target_branch: undefined,
+        merged_branches: [],
+        error: this.formatGitError(branchResult, 'failed to resolve integration target branch')
+      };
+    }
+    const targetBranch = branchResult.stdout.trim();
+    const cleanStatus = this.runGit(['status', '--porcelain', '--untracked-files=no'], this.repoRoot);
+    if (!cleanStatus.ok) {
+      return {
+        ok: false,
+        target_branch: targetBranch,
+        merged_branches: [],
+        error: this.formatGitError(cleanStatus, 'failed to inspect integration target workspace')
+      };
+    }
+    if (cleanStatus.stdout.length > 0) {
+      return {
+        ok: false,
+        target_branch: targetBranch,
+        merged_branches: [],
+        error: `integration target branch ${targetBranch} has uncommitted changes`
+      };
+    }
+
+    const mergedBranches: string[] = [];
+    const orderedAssignments = [...assignments].sort((left, right) => left.slot - right.slot);
+    for (const assignment of orderedAssignments) {
+      if (!this.gitBranchExists(assignment.branch)) {
+        return {
+          ok: false,
+          target_branch: targetBranch,
+          merged_branches: mergedBranches,
+          error: `assignment branch missing: ${assignment.branch}`
+        };
+      }
+      const mergeResult = this.runGit(['merge', '--no-ff', '--no-edit', assignment.branch], this.repoRoot);
+      if (!mergeResult.ok) {
+        this.runGit(['merge', '--abort'], this.repoRoot);
+        return {
+          ok: false,
+          target_branch: targetBranch,
+          merged_branches: mergedBranches,
+          error: this.formatGitError(mergeResult, `failed to merge ${assignment.branch}`)
+        };
+      }
+      mergedBranches.push(assignment.branch);
+    }
+    return {
+      ok: true,
+      target_branch: targetBranch,
+      merged_branches: mergedBranches
+    };
+  }
+
+  private logTeamEvent(teamId: string, eventType: string, payload: Record<string, unknown>): void {
+    this.store.logEvent({
+      team_id: teamId,
+      event_type: eventType,
+      payload,
+      created_at: nowIso()
+    });
+  }
+}
+
+interface GitCommandResult {
+  ok: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  command: string;
+  error?: string;
+}
+
+interface IntegrationAttemptResult {
+  ok: boolean;
+  target_branch?: string;
+  merged_branches: string[];
+  error?: string;
 }
