@@ -1,6 +1,6 @@
 # Agent Teams Verification Status
 
-Date: 2026-02-11
+Date: 2026-02-12
 
 This document captures concrete evidence that agent-team coordination is implemented and working.
 
@@ -94,10 +94,10 @@ npm run test:integration:ts
 - `V3-109` unit/integration suites: pass
 - `V3-110` unit/integration suites: pass
 - `V3-111` unit/integration suites: pass
-- Full unit suite: `95/95` pass
-- Full integration suite: `48/48` pass
-- `check-config`: pass
-- `verify`: pass
+- Full unit suite: `162/162` pass
+- Full integration suite: `90/90` pass
+- E2E (`v3-006.large-objective`): `1/1` pass
+- Chaos (`v3-009`, `v3-206`): `2/2` pass
 
 ## Benchmark Quality/Usage Status
 
