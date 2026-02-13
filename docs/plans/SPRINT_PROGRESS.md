@@ -36,7 +36,7 @@ Formula:
 | Ticket | Tier | Status | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
 |---|---|---|---|---|---|---|---|---|
 | `ATX-P0-001` | P0 | done | `README.md`, `docs/proposals/agent-runtime-contract.md`, `docs/codex-agent-teams-ui.md` | `T-ATX-P0-001` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`) | `e12afd7480e875d275097cb6adead190d4e6e232` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P0-002` | P0 | todo | pending | `T-ATX-P0-002` | pending | pending | pending | pending |
+| `ATX-P0-002` | P0 | in_progress | pending | `T-ATX-P0-002` | pending | pending | pending | pending |
 | `ATX-P0-003` | P0 | todo | pending | `T-ATX-P0-003` | pending | pending | pending | pending |
 | `ATX-P0-004` | P0 | todo | pending | `T-ATX-P0-004` | pending | pending | pending | pending |
 | `ATX-P0-005` | P0 | todo | pending | `T-ATX-P0-005` | pending | pending | pending | pending |

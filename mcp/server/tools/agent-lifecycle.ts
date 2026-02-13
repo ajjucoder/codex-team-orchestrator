@@ -319,7 +319,7 @@ function resolveWorkerAdapter(server: ToolServerLike, options: AgentLifecycleToo
     };
   }
 
-  const fromServer = (server as ToolServerLike & { workerAdapter?: WorkerAdapter }).workerAdapter;
+  const fromServer = server.workerAdapter;
   if (fromServer === undefined) {
     return {
       adapter: null,
@@ -343,7 +343,7 @@ function resolveGitIsolationManager(server: ToolServerLike, options: AgentLifecy
     return options.gitManager;
   }
 
-  const fromServer = (server as ToolServerLike & { gitManager?: RuntimeGitIsolationManager }).gitManager;
+  const fromServer = server.gitManager;
   if (fromServer) {
     return fromServer;
   }
@@ -485,7 +485,9 @@ export function registerAgentLifecycleTools(
     return {
       ok: true,
       agent,
-      worker_session: workerSession
+      worker_session: workerSession,
+      runtime_mode: server.runtimeMode ?? 'host_orchestrated_default',
+      managed_runtime_enabled: server.managedRuntimeEnabled ?? false
     };
   });
 
