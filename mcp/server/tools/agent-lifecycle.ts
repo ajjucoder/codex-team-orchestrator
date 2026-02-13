@@ -5,7 +5,13 @@ import { resolvePermissionProfileName } from '../permission-profiles.js';
 import { scanForSecrets } from '../guardrails.js';
 import { resolveMentionRecipients } from '../mention-parser.js';
 import { recordAgentDecisionReport } from '../decision-tracker.js';
-import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
+import type {
+  AgentRecord,
+  ArtifactRef,
+  MessageRecord,
+  TeamRecord,
+  WorkerRuntimeSessionRecord
+} from '../../store/entities.js';
 import type {
   WorkerAdapter,
   WorkerCollectArtifactsResult,
@@ -82,12 +88,38 @@ interface AgentLifecycleToolOptions {
 interface WorkerSessionBinding {
   worker_id: string;
   provider: string;
+  transport_backend?: string | null;
+  session_ref?: string | null;
+  pane_ref?: string | null;
 }
 
 interface WorkerAdapterResolution {
   adapter: WorkerAdapter | null;
   invalid_source: 'options' | 'server' | null;
 }
+
+interface EnsureWorkerSessionInput {
+  server: ToolServerLike;
+  workerAdapter: WorkerAdapter;
+  teamId: string;
+  agent: AgentRecord;
+  reason: 'team_send' | 'team_group_send' | 'team_pull_inbox';
+}
+
+type EnsureWorkerSessionResult =
+  | {
+      ok: true;
+      worker_session: WorkerSessionBinding;
+      reestablished: boolean;
+    }
+  | {
+      ok: false;
+      error: {
+        message?: unknown;
+        code?: unknown;
+        details?: unknown;
+      };
+    };
 
 type WorkerAdapterOperation =
   | 'spawn'
@@ -411,20 +443,216 @@ function resolveGitIsolationManager(server: ToolServerLike, options: AgentLifecy
   });
 }
 
-function readPersistedWorkerSession(
-  server: ToolServerLike,
-  teamId: string,
-  agentId: string
-): WorkerSessionBinding | null {
-  const persisted = server.store.getWorkerRuntimeSession(agentId);
-  if (!persisted || persisted.team_id !== teamId) return null;
-  if (persisted.lifecycle_state === 'offline') {
-    return null;
+function parseIsoMillis(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readRecordString(record: Record<string, unknown>, key: string): string | null {
+  return pickString(record[key]);
+}
+
+function resolveWorkerSessionScope(provider: string, transportBackend: string | null): 'process' | 'unknown' {
+  const normalizedBackend = transportBackend?.trim().toLowerCase() ?? '';
+  if (normalizedBackend === 'headless' || normalizedBackend === 'tmux') {
+    return 'process';
   }
+  // Built-in codex transports are process-scoped in this runtime.
+  if (provider.trim().toLowerCase() === 'codex') {
+    return 'process';
+  }
+  return 'unknown';
+}
+
+function isProcessScopedPersistedSession(persisted: WorkerRuntimeSessionRecord): boolean {
+  const metadata = isRecord(persisted.metadata) ? persisted.metadata : {};
+  const sessionScope = readRecordString(metadata, 'session_scope')?.toLowerCase();
+  if (sessionScope === 'process') {
+    return true;
+  }
+  return resolveWorkerSessionScope(persisted.provider, persisted.transport_backend) === 'process';
+}
+
+function isPersistedWorkerSessionStale(server: ToolServerLike, persisted: WorkerRuntimeSessionRecord): boolean {
+  if (!isProcessScopedPersistedSession(persisted)) return false;
+
+  const serverStartedMs = parseIsoMillis(server.startedAt ?? null);
+  const sessionUpdatedMs = parseIsoMillis(persisted.updated_at);
+  if (serverStartedMs === null || sessionUpdatedMs === null) {
+    return false;
+  }
+  return sessionUpdatedMs < serverStartedMs;
+}
+
+function markWorkerSessionOffline(
+  server: ToolServerLike,
+  persisted: WorkerRuntimeSessionRecord,
+  reason: string
+): void {
+  server.store.updateWorkerRuntimeSessionState({
+    agent_id: persisted.agent_id,
+    lifecycle_state: 'offline',
+    metadata_patch: {
+      stale_reason: reason,
+      stale_worker_id: persisted.worker_id,
+      stale_marked_at: nowIso()
+    },
+    touch_seen: false,
+    team_id: persisted.team_id
+  });
+}
+
+function toWorkerSessionBinding(persisted: WorkerRuntimeSessionRecord): WorkerSessionBinding {
   return {
     worker_id: persisted.worker_id,
-    provider: persisted.provider
+    provider: persisted.provider,
+    transport_backend: persisted.transport_backend,
+    session_ref: persisted.session_ref,
+    pane_ref: persisted.pane_ref
   };
+}
+
+function spawnAndPersistWorkerSession(input: {
+  server: ToolServerLike;
+  workerAdapter: WorkerAdapter;
+  teamId: string;
+  agent: AgentRecord;
+  reason: EnsureWorkerSessionInput['reason'];
+  replacedSession: WorkerRuntimeSessionRecord | null;
+}): EnsureWorkerSessionResult {
+  const { server, workerAdapter, teamId, agent, reason, replacedSession } = input;
+  const agentMetadata = isRecord(agent.metadata) ? agent.metadata : {};
+  const backend = readRecordString(agentMetadata, 'backend');
+  const backendSource = readRecordString(agentMetadata, 'backend_source');
+  const permissionProfile = readRecordString(agentMetadata, 'permission_profile');
+  const modelSource = readRecordString(agentMetadata, 'model_source');
+  const spawn = workerAdapter.spawn({
+    team_id: teamId,
+    agent_id: agent.agent_id,
+    role: agent.role,
+    model: agent.model,
+    metadata: {
+      team_id: teamId,
+      role: agent.role,
+      backend,
+      backend_source: backendSource,
+      permission_profile: permissionProfile,
+      model_source: modelSource,
+      restart_recovery_reason: reason,
+      recovered_from_worker_id: replacedSession?.worker_id ?? null
+    }
+  });
+  if (!spawn.ok) {
+    return {
+      ok: false,
+      error: spawn.error
+    };
+  }
+
+  const spawnedMetadata = isRecord(spawn.data.metadata) ? spawn.data.metadata : {};
+  const transportBackend = readRecordString(spawnedMetadata, 'transport_backend') ?? spawn.provider;
+  const sessionRef = readRecordString(spawnedMetadata, 'session_name')
+    ?? readRecordString(spawnedMetadata, 'session_ref');
+  const paneRef = readRecordString(spawnedMetadata, 'pane_ref');
+  const ts = nowIso();
+
+  const persisted = server.store.upsertWorkerRuntimeSession({
+    team_id: teamId,
+    agent_id: agent.agent_id,
+    worker_id: spawn.data.worker_id,
+    provider: spawn.provider,
+    transport_backend: transportBackend,
+    session_ref: sessionRef,
+    pane_ref: paneRef,
+    lifecycle_state: 'active',
+    metadata: {
+      ...spawnedMetadata,
+      role: agent.role,
+      model: agent.model,
+      backend,
+      backend_source: backendSource,
+      model_source: modelSource,
+      permission_profile: permissionProfile,
+      session_scope: resolveWorkerSessionScope(spawn.provider, transportBackend),
+      restart_recovery_reason: reason,
+      recovered_from_worker_id: replacedSession?.worker_id ?? null,
+      recovered_at: replacedSession ? ts : null
+    },
+    created_at: ts,
+    updated_at: ts,
+    last_seen_at: ts
+  });
+
+  if (!persisted) {
+    return {
+      ok: false,
+      error: {
+        code: 'WORKER_SESSION_PERSIST_FAILED',
+        message: `failed to persist worker session for agent ${agent.agent_id}`
+      }
+    };
+  }
+
+  server.store.logEvent({
+    team_id: teamId,
+    agent_id: agent.agent_id,
+    event_type: 'worker_session_reestablished',
+    payload: {
+      reason,
+      previous_worker_id: replacedSession?.worker_id ?? null,
+      worker_id: persisted.worker_id,
+      provider: persisted.provider,
+      transport_backend: persisted.transport_backend
+    }
+  });
+
+  return {
+    ok: true,
+    worker_session: toWorkerSessionBinding(persisted),
+    reestablished: true
+  };
+}
+
+function ensureWorkerSession(input: EnsureWorkerSessionInput): EnsureWorkerSessionResult {
+  const { server, workerAdapter, teamId, agent, reason } = input;
+  const persisted = server.store.getWorkerRuntimeSession(agent.agent_id);
+  if (
+    persisted &&
+    persisted.team_id === teamId &&
+    persisted.lifecycle_state !== 'offline' &&
+    !isPersistedWorkerSessionStale(server, persisted)
+  ) {
+    return {
+      ok: true,
+      worker_session: toWorkerSessionBinding(persisted),
+      reestablished: false
+    };
+  }
+
+  let replacedSession: WorkerRuntimeSessionRecord | null = null;
+  if (persisted && persisted.team_id === teamId && persisted.lifecycle_state !== 'offline') {
+    replacedSession = persisted;
+    markWorkerSessionOffline(server, persisted, 'session_stale_or_missing');
+  }
+
+  return spawnAndPersistWorkerSession({
+    server,
+    workerAdapter,
+    teamId,
+    agent,
+    reason,
+    replacedSession
+  });
+}
+
+function isWorkerNotFoundError(error: { code?: unknown }): boolean {
+  return String(error.code ?? '').trim().toUpperCase() === 'WORKER_NOT_FOUND';
+}
+
+function isWorkerSessionExplicitlyOffline(server: ToolServerLike, teamId: string, agentId: string): boolean {
+  const persisted = server.store.getWorkerRuntimeSession(agentId);
+  return Boolean(persisted && persisted.team_id === teamId && persisted.lifecycle_state === 'offline');
 }
 
 function workerEnvelopeFailure(prefix: string, error: { message?: unknown }): ToolResult {
@@ -504,6 +732,7 @@ export function registerAgentLifecycleTools(
     const permissionProfile = resolvePermissionProfileName(policy, role);
     const agentId = newId('agent');
     let workerSession: WorkerSessionBinding | null = null;
+    let workerSpawnMetadata: Record<string, unknown> = {};
 
     if (workerAdapter) {
       const workerSpawn = workerAdapter.spawn({
@@ -523,9 +752,15 @@ export function registerAgentLifecycleTools(
       if (!workerSpawn.ok) {
         return workerEnvelopeFailure('worker adapter spawn failed', workerSpawn.error);
       }
+      workerSpawnMetadata = isRecord(workerSpawn.data.metadata) ? workerSpawn.data.metadata : {};
+      const transportBackend = readRecordString(workerSpawnMetadata, 'transport_backend') ?? workerSpawn.provider;
       workerSession = {
         worker_id: workerSpawn.data.worker_id,
-        provider: workerSpawn.provider
+        provider: workerSpawn.provider,
+        transport_backend: transportBackend,
+        session_ref: readRecordString(workerSpawnMetadata, 'session_name')
+          ?? readRecordString(workerSpawnMetadata, 'session_ref'),
+        pane_ref: readRecordString(workerSpawnMetadata, 'pane_ref')
       };
     }
 
@@ -563,14 +798,22 @@ export function registerAgentLifecycleTools(
         agent_id: agent.agent_id,
         worker_id: workerSession.worker_id,
         provider: workerSession.provider,
-        transport_backend: workerSession.provider,
+        transport_backend: workerSession.transport_backend ?? workerSession.provider,
+        session_ref: workerSession.session_ref,
+        pane_ref: workerSession.pane_ref,
         lifecycle_state: 'active',
         metadata: {
+          ...workerSpawnMetadata,
           role,
           model: modelAssignment.model,
           model_source: modelAssignment.model_source,
           backend: modelAssignment.backend,
-          backend_source: modelAssignment.backend_source
+          backend_source: modelAssignment.backend_source,
+          permission_profile: permissionProfile,
+          session_scope: resolveWorkerSessionScope(
+            workerSession.provider,
+            workerSession.transport_backend ?? workerSession.provider
+          )
         },
         created_at: ts,
         updated_at: ts,
@@ -763,9 +1006,25 @@ export function registerAgentLifecycleTools(
       return duplicateResponse(duplicate, 'direct');
     }
 
-    const recipientWorkerSession = readPersistedWorkerSession(server, teamId, toAgentId);
+    let recipientWorkerSession: WorkerSessionBinding | null = null;
     let effectiveWorkerCwd: string | undefined;
-    if (workerAdapter && recipientWorkerSession) {
+    if (
+      workerAdapter &&
+      toLookup.agent.status !== 'offline' &&
+      !isWorkerSessionExplicitlyOffline(server, teamId, toAgentId)
+    ) {
+      const ensuredSession = ensureWorkerSession({
+        server,
+        workerAdapter,
+        teamId,
+        agent: toLookup.agent,
+        reason: 'team_send'
+      });
+      if (!ensuredSession.ok) {
+        return workerEnvelopeFailure('worker adapter session restore failed', ensuredSession.error);
+      }
+      recipientWorkerSession = ensuredSession.worker_session;
+
       const assignment = gitManager.allocateForAgent({
         team_id: teamId,
         agent_id: toAgentId,
@@ -823,7 +1082,7 @@ export function registerAgentLifecycleTools(
     let workerDelivery: WorkerSendInstructionResult | null = null;
     if (result.inserted) {
       if (workerAdapter && recipientWorkerSession) {
-        const delivery = workerAdapter.sendInstruction({
+        let delivery = workerAdapter.sendInstruction({
           worker_id: recipientWorkerSession.worker_id,
           instruction: summary,
           cwd: effectiveWorkerCwd,
@@ -835,6 +1094,42 @@ export function registerAgentLifecycleTools(
             to_agent_id: toAgentId
           }
         });
+        if (!delivery.ok && isWorkerNotFoundError(delivery.error)) {
+          const recoveredSession = ensureWorkerSession({
+            server,
+            workerAdapter,
+            teamId,
+            agent: toLookup.agent,
+            reason: 'team_send'
+          });
+          if (recoveredSession.ok) {
+            recipientWorkerSession = recoveredSession.worker_session;
+            delivery = workerAdapter.sendInstruction({
+              worker_id: recipientWorkerSession.worker_id,
+              instruction: summary,
+              cwd: effectiveWorkerCwd,
+              idempotency_key: idempotencyKey,
+              artifact_refs: effectiveArtifactRefs,
+              metadata: {
+                team_id: teamId,
+                from_agent_id: fromAgentId,
+                to_agent_id: toAgentId
+              }
+            });
+          } else {
+            delivery = {
+              ...delivery,
+              error: {
+                ...delivery.error,
+                message: `worker session recovery failed after WORKER_NOT_FOUND: ${String(recoveredSession.error.message ?? 'spawn failed')}`,
+                details: {
+                  ...(isRecord(delivery.error.details) ? delivery.error.details : {}),
+                  recovery_error: recoveredSession.error
+                }
+              }
+            };
+          }
+        }
         if (!delivery.ok) {
           server.store.updateWorkerRuntimeSessionState({
             agent_id: toAgentId,
@@ -1079,10 +1374,34 @@ export function registerAgentLifecycleTools(
 
     if (result.inserted && workerAdapter) {
       for (const recipientAgentId of recipients) {
-        const recipientWorkerSession = readPersistedWorkerSession(server, teamId, recipientAgentId);
-        if (!recipientWorkerSession) continue;
         const recipientAgent = recipientById.get(recipientAgentId);
         if (!recipientAgent) continue;
+        if (
+          recipientAgent.status === 'offline' ||
+          isWorkerSessionExplicitlyOffline(server, teamId, recipientAgentId)
+        ) {
+          continue;
+        }
+        let recipientWorkerSession: WorkerSessionBinding | null = null;
+        const ensuredSession = ensureWorkerSession({
+          server,
+          workerAdapter,
+          teamId,
+          agent: recipientAgent,
+          reason: 'team_group_send'
+        });
+        if (!ensuredSession.ok) {
+          workerErrors.push({
+            agent_id: recipientAgentId,
+            worker_error: {
+              code: String(ensuredSession.error.code ?? 'WORKER_SESSION_RESTORE_FAILED'),
+              message: String(ensuredSession.error.message ?? 'worker session restore failed'),
+              retryable: false
+            }
+          });
+          continue;
+        }
+        recipientWorkerSession = ensuredSession.worker_session;
 
         const assignment = gitManager.allocateForAgent({
           team_id: teamId,
@@ -1143,7 +1462,7 @@ export function registerAgentLifecycleTools(
           continue;
         }
 
-        const delivery = workerAdapter.sendInstruction({
+        let delivery = workerAdapter.sendInstruction({
           worker_id: recipientWorkerSession.worker_id,
           instruction: summary,
           cwd: effectiveWorkerCwd,
@@ -1156,6 +1475,43 @@ export function registerAgentLifecycleTools(
             delivery_mode: 'group'
           }
         });
+        if (!delivery.ok && isWorkerNotFoundError(delivery.error)) {
+          const recoveredSession = ensureWorkerSession({
+            server,
+            workerAdapter,
+            teamId,
+            agent: recipientAgent,
+            reason: 'team_group_send'
+          });
+          if (recoveredSession.ok) {
+            recipientWorkerSession = recoveredSession.worker_session;
+            delivery = workerAdapter.sendInstruction({
+              worker_id: recipientWorkerSession.worker_id,
+              instruction: summary,
+              cwd: effectiveWorkerCwd,
+              idempotency_key: idempotencyKey,
+              artifact_refs: effectiveArtifactRefs,
+              metadata: {
+                team_id: teamId,
+                from_agent_id: fromAgentId,
+                to_agent_id: recipientAgentId,
+                delivery_mode: 'group'
+              }
+            });
+          } else {
+            delivery = {
+              ...delivery,
+              error: {
+                ...delivery.error,
+                message: `worker session recovery failed after WORKER_NOT_FOUND: ${String(recoveredSession.error.message ?? 'spawn failed')}`,
+                details: {
+                  ...(isRecord(delivery.error.details) ? delivery.error.details : {}),
+                  recovery_error: recoveredSession.error
+                }
+              }
+            };
+          }
+        }
         if (!delivery.ok) {
           server.store.updateWorkerRuntimeSessionState({
             agent_id: recipientAgentId,
@@ -1485,47 +1841,134 @@ export function registerAgentLifecycleTools(
     let workerPoll: WorkerPollResult | null = null;
     let workerArtifacts: WorkerCollectArtifactsResult['artifacts'] | null = null;
     const workerErrors: Array<{ message?: unknown }> = [];
-    const workerSession = readPersistedWorkerSession(server, teamId, agentId);
-    const workerAdapterActive = Boolean(workerAdapter && workerSession);
-    if (workerAdapter && workerSession) {
-      const poll = workerAdapter.poll({
-        worker_id: workerSession.worker_id,
-        limit
+    let workerSession: WorkerSessionBinding | null = null;
+    let workerAdapterActive = false;
+    if (
+      workerAdapter &&
+      agentLookup.agent.status !== 'offline' &&
+      !isWorkerSessionExplicitlyOffline(server, teamId, agentId)
+    ) {
+      const ensuredSession = ensureWorkerSession({
+        server,
+        workerAdapter,
+        teamId,
+        agent: agentLookup.agent,
+        reason: 'team_pull_inbox'
       });
-      if (!poll.ok) {
-        workerErrors.push(poll.error);
-        server.store.updateWorkerRuntimeSessionState({
-          agent_id: agentId,
-          lifecycle_state: 'failed',
-          metadata_patch: {
-            last_error_code: String(poll.error.code ?? ''),
-            last_error_message: String(poll.error.message ?? '')
-          },
-          touch_seen: true,
-          team_id: teamId
-        });
+      if (!ensuredSession.ok) {
+        workerErrors.push(ensuredSession.error);
       } else {
-        workerPoll = poll.data;
-        server.store.updateWorkerRuntimeSessionState({
-          agent_id: agentId,
-          lifecycle_state: workerPoll.status === 'interrupted' ? 'interrupted' : 'active',
-          metadata_patch: {
-            last_poll_status: workerPoll.status,
-            last_poll_cursor: workerPoll.cursor ?? null
-          },
-          touch_seen: true,
-          team_id: teamId
-        });
-      }
+        workerSession = ensuredSession.worker_session;
+        workerAdapterActive = true;
 
-      const artifacts = workerAdapter.collectArtifacts({
-        worker_id: workerSession.worker_id,
-        limit: MAX_ARTIFACT_REFS
-      });
-      if (!artifacts.ok) {
-        workerErrors.push(artifacts.error);
-      } else {
-        workerArtifacts = artifacts.data.artifacts;
+        let pollError: { message?: unknown; code?: unknown; details?: unknown } | null = null;
+        const initialPoll = workerAdapter.poll({
+          worker_id: workerSession.worker_id,
+          limit
+        });
+        if (initialPoll.ok) {
+          workerPoll = initialPoll.data;
+        } else if (isWorkerNotFoundError(initialPoll.error)) {
+          const recoveredSession = ensureWorkerSession({
+            server,
+            workerAdapter,
+            teamId,
+            agent: agentLookup.agent,
+            reason: 'team_pull_inbox'
+          });
+          if (recoveredSession.ok) {
+            workerSession = recoveredSession.worker_session;
+            const retryPoll = workerAdapter.poll({
+              worker_id: workerSession.worker_id,
+              limit
+            });
+            if (retryPoll.ok) {
+              workerPoll = retryPoll.data;
+            } else {
+              pollError = retryPoll.error;
+            }
+          } else {
+            pollError = {
+              ...initialPoll.error,
+              message: `worker session recovery failed after WORKER_NOT_FOUND: ${String(recoveredSession.error.message ?? 'spawn failed')}`,
+              details: {
+                ...(isRecord(initialPoll.error.details) ? initialPoll.error.details : {}),
+                recovery_error: recoveredSession.error
+              }
+            };
+          }
+        } else {
+          pollError = initialPoll.error;
+        }
+
+        if (pollError) {
+          workerErrors.push(pollError);
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: agentId,
+            lifecycle_state: 'failed',
+            metadata_patch: {
+              last_error_code: String(pollError.code ?? ''),
+              last_error_message: String(pollError.message ?? '')
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
+        } else if (workerPoll) {
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: agentId,
+            lifecycle_state: workerPoll.status === 'interrupted' ? 'interrupted' : 'active',
+            metadata_patch: {
+              last_poll_status: workerPoll.status,
+              last_poll_cursor: workerPoll.cursor ?? null
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
+        }
+
+        let artifactsError: { message?: unknown; code?: unknown; details?: unknown } | null = null;
+        const initialArtifacts = workerAdapter.collectArtifacts({
+          worker_id: workerSession.worker_id,
+          limit: MAX_ARTIFACT_REFS
+        });
+        if (initialArtifacts.ok) {
+          workerArtifacts = initialArtifacts.data.artifacts;
+        } else if (isWorkerNotFoundError(initialArtifacts.error)) {
+          const recoveredSession = ensureWorkerSession({
+            server,
+            workerAdapter,
+            teamId,
+            agent: agentLookup.agent,
+            reason: 'team_pull_inbox'
+          });
+          if (recoveredSession.ok) {
+            workerSession = recoveredSession.worker_session;
+            const retryArtifacts = workerAdapter.collectArtifacts({
+              worker_id: workerSession.worker_id,
+              limit: MAX_ARTIFACT_REFS
+            });
+            if (retryArtifacts.ok) {
+              workerArtifacts = retryArtifacts.data.artifacts;
+            } else {
+              artifactsError = retryArtifacts.error;
+            }
+          } else {
+            artifactsError = {
+              ...initialArtifacts.error,
+              message: `worker session recovery failed after WORKER_NOT_FOUND: ${String(recoveredSession.error.message ?? 'spawn failed')}`,
+              details: {
+                ...(isRecord(initialArtifacts.error.details) ? initialArtifacts.error.details : {}),
+                recovery_error: recoveredSession.error
+              }
+            };
+          }
+        } else {
+          artifactsError = initialArtifacts.error;
+        }
+
+        if (artifactsError) {
+          workerErrors.push(artifactsError);
+        }
       }
     }
 

@@ -20,6 +20,7 @@ export type ToolServerLike = {
   logger: {
     log(event: Record<string, unknown>): Record<string, unknown>;
   };
+  startedAt?: string | null;
   policyEngine?: PolicyEngine;
   hookEngine?: HookEngine;
   workerAdapter?: WorkerAdapter;

@@ -218,3 +218,84 @@ test('V4-002 unit: team_send and team_pull_inbox resolve persisted worker sessio
 
   serverB.store.close();
 });
+
+test('V4-002 unit: managed runtime re-establishes process-scoped worker sessions after restart', () => {
+  cleanup();
+
+  const serverA = createServer({
+    dbPath,
+    logPath,
+    managedRuntime: {
+      enabled: true,
+      provider: 'codex',
+      transportMode: 'headless'
+    }
+  });
+  serverA.start();
+  registerTeamLifecycleTools(serverA);
+  registerAgentLifecycleTools(serverA);
+
+  const started = serverA.callTool('team_start', {
+    objective: 'managed runtime restart recovery'
+  });
+  assert.equal(started.ok, true);
+  const teamId = started.team.team_id as string;
+
+  const sender = serverA.callTool('team_spawn', {
+    team_id: teamId,
+    role: 'lead'
+  });
+  const receiver = serverA.callTool('team_spawn', {
+    team_id: teamId,
+    role: 'implementer'
+  });
+  assert.equal(sender.ok, true);
+  assert.equal(receiver.ok, true);
+
+  const persistedBefore = serverA.store.getWorkerRuntimeSession(receiver.agent.agent_id as string);
+  assert.notEqual(persistedBefore, null);
+  const initialWorkerId = String(persistedBefore?.worker_id ?? '');
+  assert.equal(initialWorkerId.length > 0, true);
+
+  serverA.store.close();
+
+  const serverB = createServer({
+    dbPath,
+    logPath,
+    managedRuntime: {
+      enabled: true,
+      provider: 'codex',
+      transportMode: 'headless'
+    }
+  });
+  serverB.start();
+  registerTeamLifecycleTools(serverB);
+  registerAgentLifecycleTools(serverB);
+
+  const send = serverB.callTool('team_send', {
+    team_id: teamId,
+    from_agent_id: sender.agent.agent_id,
+    to_agent_id: receiver.agent.agent_id,
+    summary: 'restart dispatch recovery',
+    artifact_refs: [],
+    idempotency_key: 'v4-002-managed-restart-send'
+  });
+  assert.equal(send.ok, true);
+  assert.equal(send.inserted, true);
+  assert.equal(send.worker_delivery.status, 'queued');
+
+  const pull = serverB.callTool('team_pull_inbox', {
+    team_id: teamId,
+    agent_id: receiver.agent.agent_id,
+    ack: true
+  });
+  assert.equal(pull.ok, true);
+  assert.equal(pull.worker_adapter_active, true);
+
+  const persistedAfter = serverB.store.getWorkerRuntimeSession(receiver.agent.agent_id as string);
+  assert.notEqual(persistedAfter, null);
+  assert.notEqual(persistedAfter?.worker_id, initialWorkerId);
+  assert.equal(persistedAfter?.lifecycle_state, 'active');
+
+  serverB.store.close();
+});
