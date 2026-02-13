@@ -8,8 +8,8 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `5/17 (29.4%)`
-- `P0`: `5/7 (71.4%)`
+- `Overall`: `6/17 (35.3%)`
+- `P0`: `6/7 (85.7%)`
 - `P1`: `0/6 (0.0%)`
 - `P2`: `0/4 (0.0%)`
 
@@ -40,8 +40,8 @@ Formula:
 | `ATX-P0-003` | P0 | done | `mcp/store/migrations/009_worker_runtime_sessions.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v4-002.worker-session-persistence.test.ts`, `tests/integration/v4-002.restart-recovery.integration.test.ts` | `T-ATX-P0-003` | pass (`npm run test:unit:ts -- tests/unit/v4-002.worker-session-persistence.test.ts`; `npm run test:integration:ts -- tests/integration/v4-002.restart-recovery.integration.test.ts`) | `b44d3df67be2c890c37f4771c93f6f6756920ec4` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P0-004` | P0 | done | `mcp/runtime/tmux-manager.ts`, `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/transports/headless-transport.ts`, `tests/unit/v4-003.transport-security.test.ts`, `tests/integration/v4-003.transport-security.integration.test.ts` | `T-ATX-P0-004` | pass (`npm run test:unit:ts -- tests/unit/v4-003.transport-security.test.ts`; `npm run test:integration:ts -- tests/integration/v4-003.transport-security.integration.test.ts`) | `7aed5bc7f9ca7fba0631f3ba06f7ad8f9494db72` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P0-005` | P0 | done | `mcp/store/migrations/010_team_wave_state.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/runtime/scheduler.ts`, `mcp/server/team-ui-state.ts`, `tests/unit/v4-004.wave-telemetry.test.ts`, `tests/integration/v4-004.wave-telemetry.integration.test.ts` | `T-ATX-P0-005` | pass (`npm run test:unit:ts -- tests/unit/v4-004.wave-telemetry.test.ts`; `npm run test:integration:ts -- tests/integration/v4-004.wave-telemetry.integration.test.ts`) | `96ca1df8e94a215bf68ca589cefca2d9360d5e9f` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P0-006` | P0 | in_progress | pending | `T-ATX-P0-006` | pending | pending | pending | pending |
-| `ATX-P0-007` | P0 | todo | pending | `T-ATX-P0-007` | pending | pending | pending | pending |
+| `ATX-P0-006` | P0 | done | `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/entities/message.schema.json`, `mcp/schemas/contracts.ts`, `tests/unit/v4-005.group-idempotency.test.ts`, `tests/integration/v4-005.group-idempotency.integration.test.ts` | `T-ATX-P0-006` | pass (`npm run test:unit:ts -- tests/unit/v4-005.group-idempotency.test.ts`; `npm run test:integration:ts -- tests/integration/v4-005.group-idempotency.integration.test.ts`) | `e36cb6f15dd38dbd4fd586271458e149d6b6cc85` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P0-007` | P0 | in_progress | pending | `T-ATX-P0-007` | pending | pending | pending | pending |
 | `ATX-P1-001` | P1 | todo | pending | `T-ATX-P1-001` | pending | pending | pending | pending |
 | `ATX-P1-002` | P1 | todo | pending | `T-ATX-P1-002` | pending | pending | pending | pending |
 | `ATX-P1-003` | P1 | todo | pending | `T-ATX-P1-003` | pending | pending | pending | pending |
@@ -72,13 +72,15 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v4-003.transport-security.integration.test.ts` -> pass (ticket `ATX-P0-004`)
 - `npm run test:unit:ts -- tests/unit/v4-004.wave-telemetry.test.ts` -> pass (ticket `ATX-P0-005`)
 - `npm run test:integration:ts -- tests/integration/v4-004.wave-telemetry.integration.test.ts` -> pass (ticket `ATX-P0-005`)
+- `npm run test:unit:ts -- tests/unit/v4-005.group-idempotency.test.ts` -> pass (ticket `ATX-P0-006`)
+- `npm run test:integration:ts -- tests/integration/v4-005.group-idempotency.integration.test.ts` -> pass (ticket `ATX-P0-006`)
 
 ## Blockers
 
-- Group message idempotency contract (`ATX-P0-006`) must be finalized before implementing `team_group_send`.
+- None.
 
 ## Next Actions
 
-1. Execute `ATX-P0-006` reliable group-send idempotency and status model.
-2. Execute `ATX-P0-007` deterministic `team-tui`/`team-card` compatibility guardrails.
+1. Execute `ATX-P0-007` deterministic `team-tui`/`team-card` compatibility guardrails.
+2. Execute `ATX-P1-001` flagged DAG wave dispatch and fairness fallback.
 3. Run linked tests per ticket and update this tracker after each status transition.
