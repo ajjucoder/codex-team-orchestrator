@@ -68,6 +68,9 @@ command_policy:
     lead: git status,git diff,git log,git add,git commit,git push,npm run test,npm run typecheck,node --import tsx --test
 arbitration:
   default_strategy: consensus
+scheduler:
+  wave_dispatch:
+    enabled: true
 model_routing:
   enabled: false
   mode: inherit_session_model

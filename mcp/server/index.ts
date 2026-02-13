@@ -100,11 +100,18 @@ export function createScheduler(options: CreateSchedulerOptions = {}): RuntimeSc
   const store = options.server?.store
     ?? options.store
     ?? new SqliteStore(options.dbPath ?? '.tmp/team-orchestrator.sqlite', options.storeOptions);
+  const policyEngine = options.server?.policyEngine as { resolveTeamPolicy?: (team: { profile?: string | null } | null | undefined) => Record<string, unknown> } | undefined;
 
   return new RuntimeScheduler({
     store,
     tickIntervalMs: options.tickIntervalMs,
     readyTaskLimit: options.readyTaskLimit,
-    gitManager: options.gitManager
+    gitManager: options.gitManager,
+    resolveTeamPolicy: (team) => {
+      if (!policyEngine || typeof policyEngine.resolveTeamPolicy !== 'function') {
+        return {};
+      }
+      return policyEngine.resolveTeamPolicy(team) ?? {};
+    }
   });
 }
