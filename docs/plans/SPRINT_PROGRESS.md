@@ -129,6 +129,11 @@ Completed actions:
 5. Updated docs index/checklist links:
    - `README.md`
    - `docs/release-checklist.md`
+6. Committed/pushed post-merge documentation hardening:
+   - commit: `ab4b3969eb4084a96ade8b9e01af6612ea7f5ba0`
+   - pushed branch: `main`
+7. Verified GitHub CI on docs commit run `21979518019` (pass).
+8. Executed release gate and packaging pipeline: `./scripts/release-ready.sh` -> `release-ready:ok`.
 
 Branch cleanup:
 
