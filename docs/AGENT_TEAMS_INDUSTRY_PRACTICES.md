@@ -171,6 +171,22 @@ Why:
 
 - Shared operational language reduces incident MTTR and onboarding cost.
 
+## 11) Release Gates Must Verify Migrations + Deterministic UX Contracts
+
+Practice:
+
+- Treat schema migrations and deterministic operator outputs as first-class release blockers.
+
+In this repo:
+
+- Migration files: `mcp/store/migrations/009_worker_runtime_sessions.sql`, `mcp/store/migrations/010_team_wave_state.sql`, `mcp/store/migrations/011_agent_decision_reports.sql`
+- Deterministic contract tests: `tests/unit/v3-111.team-card.test.ts`, `tests/integration/v3-111.tui.integration.test.ts`
+- Release gate script: `scripts/release-ready.sh`
+
+Why:
+
+- Multi-agent runtime changes can silently pass generic tests while still breaking operator workflows or state recovery guarantees.
+
 ## Practical Checklist for New Features
 
 Use this checklist before shipping a new Agent Teams feature:
@@ -182,4 +198,5 @@ Use this checklist before shipping a new Agent Teams feature:
 5. Add release-gate impact note (quality/cost/reliability).
 6. Verify branch/worktree and command-guardrail safety is unchanged.
 7. Run full unit + integration suites before PR.
-
+8. Run deterministic surface gates (`team-card`, `team-tui`) and migration regression checks explicitly.
+9. Document fallback and rollback procedures for the feature flags touched by the release.

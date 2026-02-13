@@ -439,3 +439,40 @@ Contracts:
 1. Staffing planner uses deterministic keyword matching rather than ML-based intent/domain classification.
 2. Hybrid UX flow is tightly coupled to Codex/Claude Code runtime behaviors and tool contracts.
 3. `mcp/store/sqlite-store.ts` remains a large monolith (2,500+ lines) and is marked for future modular split.
+
+## Release Runbook: Flags, Migrations, Fallback, Rollback
+
+### Feature Flags / Runtime Controls
+
+| Surface | Setting | Effect |
+| --- | --- | --- |
+| Runtime mode | `runtimeMode=managed_runtime` or `managedRuntime.enabled=true` | Enables managed worker adapter lifecycle. |
+| Transport selection | `managedRuntime.transportMode` or env `ATX_MANAGED_RUNTIME_TRANSPORT` / `CODEX_MANAGED_RUNTIME_TRANSPORT` | Select `auto`, `headless`, or `tmux`. |
+| DAG wave dispatch | `scheduler.wave_dispatch.enabled` | Enables wave-depth dispatch mode instead of fair queue-only behavior. |
+| DAG perf guard | `scheduler.wave_dispatch.perf_guard.*` | Threshold-based telemetry/guardrail events for DAG recomputation cost. |
+
+### Migration Steps (runtime + observability)
+
+1. Ensure the following migrations exist and are included in release artifacts:
+   - `mcp/store/migrations/009_worker_runtime_sessions.sql`
+   - `mcp/store/migrations/010_team_wave_state.sql`
+   - `mcp/store/migrations/011_agent_decision_reports.sql`
+2. Start the server once against the target DB path to apply pending migrations.
+3. Validate migration regression gates:
+   - `npm run test:unit:ts -- tests/unit/v4-002.worker-session-persistence.test.ts tests/unit/v4-004.wave-telemetry.test.ts tests/unit/v4-009.decision-reports.test.ts`
+
+### Fallback Behavior
+
+1. Transport `auto` deterministically falls back to `headless` in CI and non-TTY environments.
+2. Explicit `tmux` mode falls back to `headless` when tmux is unavailable.
+3. Unsupported runtime backend requests fail closed at spawn with actionable error (`BACKEND_COMMAND_UNSUPPORTED`) and supported-backend hints.
+4. Recovery cleanup removes stale/orphan worker runtime sessions during `team_orphan_recover` to prevent stale-dispatch loops after restart.
+
+### Rollback Procedure
+
+1. Set runtime back to host-orchestrated mode (`runtimeMode=host_orchestrated_default`) and restart services.
+2. Disable wave dispatch (`scheduler.wave_dispatch.enabled=false`) if queue fairness regressions are suspected.
+3. Pin managed runtime transport to `headless` if tmux-specific behavior is implicated (`managedRuntime.transportMode=headless`).
+4. Re-run deterministic surface gates to verify output contracts remain stable:
+   - `npm run test:unit:ts -- tests/unit/v3-111.team-card.test.ts`
+   - `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`
