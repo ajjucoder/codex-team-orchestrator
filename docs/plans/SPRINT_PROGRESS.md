@@ -8,8 +8,8 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `4/17 (23.5%)`
-- `P0`: `4/7 (57.1%)`
+- `Overall`: `5/17 (29.4%)`
+- `P0`: `5/7 (71.4%)`
 - `P1`: `0/6 (0.0%)`
 - `P2`: `0/4 (0.0%)`
 
@@ -39,8 +39,8 @@ Formula:
 | `ATX-P0-002` | P0 | done | `mcp/server/index.ts`, `mcp/server/server.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/types.ts`, `tests/unit/v4-001.transport-bootstrap.test.ts`, `tests/integration/v4-001.transport-bootstrap.integration.test.ts` | `T-ATX-P0-002` | pass (`npm run test:unit:ts -- tests/unit/v4-001.transport-bootstrap.test.ts`; `npm run test:integration:ts -- tests/integration/v4-001.transport-bootstrap.integration.test.ts`) | `658faacb4c6541eb8d1ac32abcbb5857f0ca5842` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P0-003` | P0 | done | `mcp/store/migrations/009_worker_runtime_sessions.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts`, `tests/unit/v4-002.worker-session-persistence.test.ts`, `tests/integration/v4-002.restart-recovery.integration.test.ts` | `T-ATX-P0-003` | pass (`npm run test:unit:ts -- tests/unit/v4-002.worker-session-persistence.test.ts`; `npm run test:integration:ts -- tests/integration/v4-002.restart-recovery.integration.test.ts`) | `b44d3df67be2c890c37f4771c93f6f6756920ec4` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P0-004` | P0 | done | `mcp/runtime/tmux-manager.ts`, `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/transports/headless-transport.ts`, `tests/unit/v4-003.transport-security.test.ts`, `tests/integration/v4-003.transport-security.integration.test.ts` | `T-ATX-P0-004` | pass (`npm run test:unit:ts -- tests/unit/v4-003.transport-security.test.ts`; `npm run test:integration:ts -- tests/integration/v4-003.transport-security.integration.test.ts`) | `7aed5bc7f9ca7fba0631f3ba06f7ad8f9494db72` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P0-005` | P0 | in_progress | pending | `T-ATX-P0-005` | pending | pending | pending | pending |
-| `ATX-P0-006` | P0 | todo | pending | `T-ATX-P0-006` | pending | pending | pending | pending |
+| `ATX-P0-005` | P0 | done | `mcp/store/migrations/010_team_wave_state.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/runtime/scheduler.ts`, `mcp/server/team-ui-state.ts`, `tests/unit/v4-004.wave-telemetry.test.ts`, `tests/integration/v4-004.wave-telemetry.integration.test.ts` | `T-ATX-P0-005` | pass (`npm run test:unit:ts -- tests/unit/v4-004.wave-telemetry.test.ts`; `npm run test:integration:ts -- tests/integration/v4-004.wave-telemetry.integration.test.ts`) | `96ca1df8e94a215bf68ca589cefca2d9360d5e9f` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P0-006` | P0 | in_progress | pending | `T-ATX-P0-006` | pending | pending | pending | pending |
 | `ATX-P0-007` | P0 | todo | pending | `T-ATX-P0-007` | pending | pending | pending | pending |
 | `ATX-P1-001` | P1 | todo | pending | `T-ATX-P1-001` | pending | pending | pending | pending |
 | `ATX-P1-002` | P1 | todo | pending | `T-ATX-P1-002` | pending | pending | pending | pending |
@@ -70,6 +70,8 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v4-002.restart-recovery.integration.test.ts` -> pass (ticket `ATX-P0-003`)
 - `npm run test:unit:ts -- tests/unit/v4-003.transport-security.test.ts` -> pass (ticket `ATX-P0-004`)
 - `npm run test:integration:ts -- tests/integration/v4-003.transport-security.integration.test.ts` -> pass (ticket `ATX-P0-004`)
+- `npm run test:unit:ts -- tests/unit/v4-004.wave-telemetry.test.ts` -> pass (ticket `ATX-P0-005`)
+- `npm run test:integration:ts -- tests/integration/v4-004.wave-telemetry.integration.test.ts` -> pass (ticket `ATX-P0-005`)
 
 ## Blockers
 
@@ -77,6 +79,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P0-005` persisted wave telemetry for cross-process UI state.
-2. Execute `ATX-P0-006` reliable group-send idempotency and status model.
+1. Execute `ATX-P0-006` reliable group-send idempotency and status model.
+2. Execute `ATX-P0-007` deterministic `team-tui`/`team-card` compatibility guardrails.
 3. Run linked tests per ticket and update this tracker after each status transition.
