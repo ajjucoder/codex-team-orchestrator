@@ -8,8 +8,8 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `1/17 (5.9%)`
-- `P0`: `1/7 (14.3%)`
+- `Overall`: `2/17 (11.8%)`
+- `P0`: `2/7 (28.6%)`
 - `P1`: `0/6 (0.0%)`
 - `P2`: `0/4 (0.0%)`
 
@@ -36,8 +36,8 @@ Formula:
 | Ticket | Tier | Status | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
 |---|---|---|---|---|---|---|---|---|
 | `ATX-P0-001` | P0 | done | `README.md`, `docs/proposals/agent-runtime-contract.md`, `docs/codex-agent-teams-ui.md` | `T-ATX-P0-001` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`) | `e12afd7480e875d275097cb6adead190d4e6e232` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P0-002` | P0 | in_progress | pending | `T-ATX-P0-002` | pending | pending | pending | pending |
-| `ATX-P0-003` | P0 | todo | pending | `T-ATX-P0-003` | pending | pending | pending | pending |
+| `ATX-P0-002` | P0 | done | `mcp/server/index.ts`, `mcp/server/server.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/types.ts`, `tests/unit/v4-001.transport-bootstrap.test.ts`, `tests/integration/v4-001.transport-bootstrap.integration.test.ts` | `T-ATX-P0-002` | pass (`npm run test:unit:ts -- tests/unit/v4-001.transport-bootstrap.test.ts`; `npm run test:integration:ts -- tests/integration/v4-001.transport-bootstrap.integration.test.ts`) | `658faacb4c6541eb8d1ac32abcbb5857f0ca5842` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P0-003` | P0 | in_progress | pending | `T-ATX-P0-003` | pending | pending | pending | pending |
 | `ATX-P0-004` | P0 | todo | pending | `T-ATX-P0-004` | pending | pending | pending | pending |
 | `ATX-P0-005` | P0 | todo | pending | `T-ATX-P0-005` | pending | pending | pending | pending |
 | `ATX-P0-006` | P0 | todo | pending | `T-ATX-P0-006` | pending | pending | pending | pending |
@@ -64,6 +64,8 @@ A ticket may be marked `done` only if all are present:
 ## Test Evidence
 
 - `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts` -> pass (ticket `ATX-P0-001`)
+- `npm run test:unit:ts -- tests/unit/v4-001.transport-bootstrap.test.ts` -> pass (ticket `ATX-P0-002`)
+- `npm run test:integration:ts -- tests/integration/v4-001.transport-bootstrap.integration.test.ts` -> pass (ticket `ATX-P0-002`)
 
 ## Blockers
 
@@ -72,6 +74,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P0-002` transport bootstrap wiring and retain existing default behavior when no transport is configured.
-2. Execute `ATX-P0-003` worker runtime session persistence with migration-backed restart recovery.
+1. Execute `ATX-P0-003` worker runtime session persistence with migration-backed restart recovery.
+2. Execute `ATX-P0-004` secure instruction channel (framed/escaped payload delivery).
 3. Run linked tests per ticket and update this tracker after each status transition.
