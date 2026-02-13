@@ -5,11 +5,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   AgentCreateInput,
+  AgentDecisionReportRecord,
   AgentRecord,
   AppendMessageInput,
   ArtifactRecord,
   ArtifactRef,
   ClaimTaskInput,
+  CreateAgentDecisionReportInput,
   CreateExecutionAttemptInput,
   InboxRecord,
   MessagePayload,
@@ -18,6 +20,7 @@ import type {
   RunEventRecord,
   TaskCreateInput,
   TaskExecutionAttemptRecord,
+  TeamWaveStateRecord,
   TaskRecord,
   TeamCreateInput,
   TeamHierarchyLinkRecord,
@@ -26,7 +29,11 @@ import type {
   TeamStatus,
   UpdateExecutionAttemptInput,
   UpdateTaskInput,
-  UsageSample
+  UsageSample,
+  UpsertTeamWaveStateInput,
+  WorkerRuntimeSessionRecord,
+  WorkerRuntimeSessionState,
+  UpsertWorkerRuntimeSessionInput
 } from './entities.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -253,6 +260,13 @@ function normalizeTeamMode(value: unknown): TeamMode {
   return 'default';
 }
 
+function normalizeWorkerRuntimeSessionState(value: unknown): WorkerRuntimeSessionState {
+  if (value === 'active' || value === 'idle' || value === 'interrupted' || value === 'offline' || value === 'failed') {
+    return value;
+  }
+  return 'active';
+}
+
 function normalizeTeamId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -277,6 +291,25 @@ function normalizePositiveInt(value: unknown, fallback: number, min = 1): number
   return Math.max(min, Math.floor(parsed));
 }
 
+function normalizeNonNegativeInt(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(0, Math.floor(fallback));
+  return Math.max(0, Math.floor(parsed));
+}
+
+function normalizeCompletionPct(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function normalizeConfidence(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(1, parsed));
+}
+
 function normalizeNumberList(values: number[] = []): number[] {
   return [...new Set(
     values
@@ -294,16 +327,30 @@ function normalizeStringList(values: string[] = []): string[] {
   )];
 }
 
+function computeRecipientSetHash(recipientAgentIds: string[] = []): string | null {
+  const normalized = normalizeStringList(recipientAgentIds).sort((a, b) => a.localeCompare(b));
+  if (normalized.length === 0) return null;
+  return sha256(normalized.join('\n'));
+}
+
 function computeMessageRouteKey({
   delivery_mode,
   from_agent_id,
-  to_agent_id = null
-}: Pick<MessageRecord, 'delivery_mode' | 'from_agent_id'> & { to_agent_id?: string | null }): string {
+  to_agent_id = null,
+  recipient_agent_ids = []
+}: Pick<MessageRecord, 'delivery_mode' | 'from_agent_id'> & {
+  to_agent_id?: string | null;
+  recipient_agent_ids?: string[];
+}): string {
+  const recipientSetHash = computeRecipientSetHash(recipient_agent_ids);
   if (delivery_mode === 'broadcast') {
     return `broadcast:${from_agent_id}`;
   }
   if (delivery_mode === 'direct') {
     return `direct:${from_agent_id}->${to_agent_id ?? ''}`;
+  }
+  if (delivery_mode === 'group') {
+    return `group:${from_agent_id}->${recipientSetHash ?? 'none'}`;
   }
   return `${delivery_mode}:${from_agent_id}->${to_agent_id ?? ''}`;
 }
@@ -342,6 +389,62 @@ function hydrateExecutionAttempt(row: Record<string, unknown>): TaskExecutionAtt
     metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at)
+  };
+}
+
+function hydrateWorkerRuntimeSession(row: Record<string, unknown>): WorkerRuntimeSessionRecord {
+  return {
+    team_id: String(row.team_id),
+    agent_id: String(row.agent_id),
+    worker_id: String(row.worker_id),
+    provider: String(row.provider),
+    transport_backend: normalizeTeamId(row.transport_backend),
+    session_ref: normalizeTeamId(row.session_ref),
+    pane_ref: normalizeTeamId(row.pane_ref),
+    lifecycle_state: normalizeWorkerRuntimeSessionState(row.lifecycle_state),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+    last_seen_at: normalizeTeamId(row.last_seen_at)
+  };
+}
+
+function hydrateTeamWaveState(row: Record<string, unknown>): TeamWaveStateRecord {
+  return {
+    team_id: String(row.team_id),
+    wave_id: normalizeNonNegativeInt(row.wave_id),
+    tick_count: normalizeNonNegativeInt(row.tick_count),
+    dispatched_count: normalizeNonNegativeInt(row.dispatched_count),
+    recovered_tasks: normalizeNonNegativeInt(row.recovered_tasks),
+    cleaned_assignments: normalizeNonNegativeInt(row.cleaned_assignments),
+    dispatched_total: normalizeNonNegativeInt(row.dispatched_total),
+    recovered_total: normalizeNonNegativeInt(row.recovered_total),
+    cleaned_total: normalizeNonNegativeInt(row.cleaned_total),
+    ready_tasks: normalizeNonNegativeInt(row.ready_tasks),
+    in_progress_tasks: normalizeNonNegativeInt(row.in_progress_tasks),
+    blocked_tasks: normalizeNonNegativeInt(row.blocked_tasks),
+    done_tasks: normalizeNonNegativeInt(row.done_tasks),
+    cancelled_tasks: normalizeNonNegativeInt(row.cancelled_tasks),
+    total_tasks: normalizeNonNegativeInt(row.total_tasks),
+    completion_pct: normalizeCompletionPct(row.completion_pct),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at)
+  };
+}
+
+function hydrateAgentDecisionReport(row: Record<string, unknown>): AgentDecisionReportRecord {
+  return {
+    report_id: String(row.report_id),
+    team_id: String(row.team_id),
+    agent_id: String(row.agent_id),
+    task_id: String(row.task_id),
+    revision: normalizePositiveInt(row.revision, 1),
+    decision: String(row.decision),
+    summary: String(row.summary),
+    confidence: normalizeConfidence(row.confidence),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at)
   };
 }
 
@@ -709,11 +812,213 @@ export class SqliteStore {
     return this.getAgent(agentId);
   }
 
+  upsertWorkerRuntimeSession(input: UpsertWorkerRuntimeSessionInput): WorkerRuntimeSessionRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const updatedAt = coerceIsoTimestamp(input.updated_at, createdAt);
+    const lifecycleState = normalizeWorkerRuntimeSessionState(input.lifecycle_state);
+    const lastSeenAt = input.last_seen_at === undefined
+      ? updatedAt
+      : (input.last_seen_at === null ? null : coerceIsoTimestamp(input.last_seen_at, updatedAt));
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO worker_runtime_sessions(
+             agent_id, team_id, worker_id, provider, transport_backend, session_ref, pane_ref,
+             lifecycle_state, metadata_json, created_at, updated_at, last_seen_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent_id) DO UPDATE SET
+             team_id=excluded.team_id,
+             worker_id=excluded.worker_id,
+             provider=excluded.provider,
+             transport_backend=excluded.transport_backend,
+             session_ref=excluded.session_ref,
+             pane_ref=excluded.pane_ref,
+             lifecycle_state=excluded.lifecycle_state,
+             metadata_json=excluded.metadata_json,
+             updated_at=excluded.updated_at,
+             last_seen_at=excluded.last_seen_at`
+        )
+        .run(
+          input.agent_id,
+          input.team_id,
+          input.worker_id,
+          input.provider,
+          input.transport_backend ?? null,
+          input.session_ref ?? null,
+          input.pane_ref ?? null,
+          lifecycleState,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt,
+          updatedAt,
+          lastSeenAt
+        );
+    });
+    this.touchTeam(input.team_id, updatedAt);
+    return this.getWorkerRuntimeSession(input.agent_id);
+  }
+
+  getWorkerRuntimeSession(agentId: string): WorkerRuntimeSessionRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM worker_runtime_sessions WHERE agent_id = ?')
+      .get(agentId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateWorkerRuntimeSession(row);
+  }
+
+  listWorkerRuntimeSessionsByTeam(teamId: string): WorkerRuntimeSessionRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM worker_runtime_sessions WHERE team_id = ? ORDER BY updated_at DESC, agent_id ASC')
+      .all(teamId) as Record<string, unknown>[];
+    return rows.map((row) => hydrateWorkerRuntimeSession(row));
+  }
+
+  updateWorkerRuntimeSessionState({
+    agent_id,
+    lifecycle_state,
+    metadata_patch,
+    touch_seen = false,
+    team_id
+  }: {
+    agent_id: string;
+    lifecycle_state?: WorkerRuntimeSessionState;
+    metadata_patch?: Record<string, unknown>;
+    touch_seen?: boolean;
+    team_id?: string;
+  }): WorkerRuntimeSessionRecord | null {
+    const current = this.getWorkerRuntimeSession(agent_id);
+    if (!current) return null;
+
+    const nextState = lifecycle_state ?? current.lifecycle_state;
+    const nextMetadata = {
+      ...(current.metadata ?? {}),
+      ...(metadata_patch ?? {})
+    };
+    const updatedAt = nowIso();
+    const nextLastSeenAt = touch_seen ? updatedAt : current.last_seen_at;
+    const scopedTeamId = team_id ?? current.team_id;
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `UPDATE worker_runtime_sessions
+           SET lifecycle_state = ?, metadata_json = ?, updated_at = ?, last_seen_at = ?
+           WHERE agent_id = ?`
+        )
+        .run(
+          nextState,
+          JSON.stringify(nextMetadata),
+          updatedAt,
+          nextLastSeenAt,
+          agent_id
+        );
+    });
+    this.touchTeam(scopedTeamId, updatedAt);
+    return this.getWorkerRuntimeSession(agent_id);
+  }
+
+  deleteWorkerRuntimeSession(agentId: string): boolean {
+    const existing = this.getWorkerRuntimeSession(agentId);
+    if (!existing) return false;
+
+    let deleted = 0;
+    this.runWithRetry(() => {
+      const result = this.db
+        .prepare('DELETE FROM worker_runtime_sessions WHERE agent_id = ?')
+        .run(agentId);
+      deleted = Number(result.changes ?? 0);
+    });
+    if (deleted > 0) {
+      this.touchTeam(existing.team_id);
+    }
+    return deleted > 0;
+  }
+
+  upsertTeamWaveState(input: UpsertTeamWaveStateInput): TeamWaveStateRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const updatedAt = coerceIsoTimestamp(input.updated_at, createdAt);
+    const totalTasks = normalizeNonNegativeInt(input.total_tasks);
+    const doneTasks = normalizeNonNegativeInt(input.done_tasks);
+    const derivedCompletionPct = totalTasks > 0
+      ? Math.round((doneTasks / totalTasks) * 100)
+      : 0;
+    const completionPct = input.completion_pct === undefined
+      ? derivedCompletionPct
+      : normalizeCompletionPct(input.completion_pct);
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO team_wave_state(
+             team_id, wave_id, tick_count, dispatched_count, recovered_tasks, cleaned_assignments,
+             dispatched_total, recovered_total, cleaned_total,
+             ready_tasks, in_progress_tasks, blocked_tasks, done_tasks, cancelled_tasks, total_tasks,
+             completion_pct, metadata_json, created_at, updated_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(team_id) DO UPDATE SET
+             wave_id=excluded.wave_id,
+             tick_count=excluded.tick_count,
+             dispatched_count=excluded.dispatched_count,
+             recovered_tasks=excluded.recovered_tasks,
+             cleaned_assignments=excluded.cleaned_assignments,
+             dispatched_total=excluded.dispatched_total,
+             recovered_total=excluded.recovered_total,
+             cleaned_total=excluded.cleaned_total,
+             ready_tasks=excluded.ready_tasks,
+             in_progress_tasks=excluded.in_progress_tasks,
+             blocked_tasks=excluded.blocked_tasks,
+             done_tasks=excluded.done_tasks,
+             cancelled_tasks=excluded.cancelled_tasks,
+             total_tasks=excluded.total_tasks,
+             completion_pct=excluded.completion_pct,
+             metadata_json=excluded.metadata_json,
+             updated_at=excluded.updated_at`
+        )
+        .run(
+          input.team_id,
+          normalizeNonNegativeInt(input.wave_id),
+          normalizeNonNegativeInt(input.tick_count),
+          normalizeNonNegativeInt(input.dispatched_count),
+          normalizeNonNegativeInt(input.recovered_tasks),
+          normalizeNonNegativeInt(input.cleaned_assignments),
+          normalizeNonNegativeInt(input.dispatched_total),
+          normalizeNonNegativeInt(input.recovered_total),
+          normalizeNonNegativeInt(input.cleaned_total),
+          normalizeNonNegativeInt(input.ready_tasks),
+          normalizeNonNegativeInt(input.in_progress_tasks),
+          normalizeNonNegativeInt(input.blocked_tasks),
+          doneTasks,
+          normalizeNonNegativeInt(input.cancelled_tasks),
+          totalTasks,
+          completionPct,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt,
+          updatedAt
+        );
+    });
+    this.touchTeam(input.team_id, updatedAt);
+    return this.getTeamWaveState(input.team_id);
+  }
+
+  getTeamWaveState(teamId: string): TeamWaveStateRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM team_wave_state WHERE team_id = ?')
+      .get(teamId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateTeamWaveState(row);
+  }
+
   appendMessage(message: AppendMessageInputWithScope): AppendMessageResult {
+    const normalizedRecipients = normalizeStringList(message.recipient_agent_ids ?? []);
+    if (message.delivery_mode === 'group' && normalizedRecipients.length === 0) {
+      throw new Error('group delivery_mode requires non-empty recipient_agent_ids');
+    }
+
     const routeKey = computeMessageRouteKey({
       delivery_mode: message.delivery_mode,
       from_agent_id: message.from_agent_id,
-      to_agent_id: message.to_agent_id ?? null
+      to_agent_id: message.to_agent_id ?? null,
+      recipient_agent_ids: normalizedRecipients
     });
     const idempotencyScope = normalizeIdempotencyScope(message.idempotency_scope, routeKey);
     const normalizedCreatedAt = coerceIsoTimestamp(message.created_at, nowIso());
@@ -761,15 +1066,14 @@ export class SqliteStore {
           normalizedCreatedAt
         );
 
-      if (message.recipient_agent_ids?.length) {
-        const recipientIds = normalizeStringList(message.recipient_agent_ids);
+      if (normalizedRecipients.length) {
         const stmt = this.db.prepare(
           `INSERT OR IGNORE INTO inbox(
              message_id, team_id, agent_id, delivered_at, ack_at,
              attempt_count, next_attempt_at, last_attempt_at, last_error, dead_letter_at
            ) VALUES(?, ?, ?, ?, NULL, 0, ?, NULL, NULL, NULL)`
         );
-        for (const agentId of recipientIds) {
+        for (const agentId of normalizedRecipients) {
           stmt.run(message.message_id, message.team_id, agentId, normalizedCreatedAt, normalizedCreatedAt);
         }
       }
@@ -852,12 +1156,17 @@ export class SqliteStore {
     team_id,
     from_agent_id,
     to_agent_id = null,
-    delivery_mode
-  }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & { to_agent_id?: string | null }): MessageRecord | null {
+    delivery_mode,
+    recipient_agent_ids = []
+  }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & {
+    to_agent_id?: string | null;
+    recipient_agent_ids?: string[];
+  }): MessageRecord | null {
     const routeKey = computeMessageRouteKey({
       delivery_mode,
       from_agent_id,
-      to_agent_id
+      to_agent_id,
+      recipient_agent_ids
     });
     const row = this.db
       .prepare(
@@ -882,11 +1191,13 @@ export class SqliteStore {
     from_agent_id,
     to_agent_id = null,
     delivery_mode,
+    recipient_agent_ids = [],
     payload,
     within_ms = 120000,
     limit = 25
   }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & {
     to_agent_id?: string | null;
+    recipient_agent_ids?: string[];
     payload: MessagePayload;
     within_ms?: number;
     limit?: number;
@@ -894,7 +1205,8 @@ export class SqliteStore {
     const routeKey = computeMessageRouteKey({
       delivery_mode,
       from_agent_id,
-      to_agent_id
+      to_agent_id,
+      recipient_agent_ids
     });
     const rows = this.db
       .prepare(
@@ -1422,6 +1734,117 @@ export class SqliteStore {
 
     this.touchTeam(String(current.team_id));
     return this.getExecutionAttempt(execution_id);
+  }
+
+  createAgentDecisionReport(input: CreateAgentDecisionReportInput): AgentDecisionReportRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const revision = normalizePositiveInt(input.revision, 1);
+    const confidence = normalizeConfidence(input.confidence);
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO agent_decision_reports(
+             report_id, team_id, agent_id, task_id, revision, decision, summary, confidence, metadata_json, created_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.report_id,
+          input.team_id,
+          input.agent_id,
+          input.task_id,
+          revision,
+          String(input.decision),
+          String(input.summary),
+          confidence,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt
+        );
+    });
+    this.touchTeam(input.team_id, createdAt);
+    return this.getAgentDecisionReport(input.report_id);
+  }
+
+  getAgentDecisionReport(report_id: string): AgentDecisionReportRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM agent_decision_reports WHERE report_id = ?')
+      .get(report_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateAgentDecisionReport(row);
+  }
+
+  getLatestAgentDecisionReport(team_id: string, agent_id: string, task_id: string): AgentDecisionReportRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT *
+         FROM agent_decision_reports
+         WHERE team_id = ?
+           AND agent_id = ?
+           AND task_id = ?
+         ORDER BY revision DESC, created_at DESC, report_id DESC
+         LIMIT 1`
+      )
+      .get(team_id, agent_id, task_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateAgentDecisionReport(row);
+  }
+
+  listAgentDecisionReports(
+    team_id: string,
+    options: {
+      task_id?: string;
+      agent_id?: string;
+      limit?: number;
+    } = {}
+  ): AgentDecisionReportRecord[] {
+    const conditions = ['team_id = ?'];
+    const params: Array<string | number> = [team_id];
+
+    if (options.task_id) {
+      conditions.push('task_id = ?');
+      params.push(options.task_id);
+    }
+    if (options.agent_id) {
+      conditions.push('agent_id = ?');
+      params.push(options.agent_id);
+    }
+    const limit = normalizePositiveInt(options.limit ?? 20, 20);
+    params.push(limit);
+
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM agent_decision_reports
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY created_at DESC, revision DESC, report_id DESC
+         LIMIT ?`
+      )
+      .all(...params) as Record<string, unknown>[];
+    return rows.map((row) => hydrateAgentDecisionReport(row));
+  }
+
+  listLatestAgentDecisionReports(team_id: string, limit = 20): AgentDecisionReportRecord[] {
+    const safeLimit = normalizePositiveInt(limit, 20);
+    const rows = this.db
+      .prepare(
+        `SELECT adr.*
+         FROM agent_decision_reports adr
+         INNER JOIN (
+           SELECT team_id, agent_id, task_id, MAX(revision) AS latest_revision
+           FROM agent_decision_reports
+           WHERE team_id = ?
+           GROUP BY team_id, agent_id, task_id
+         ) latest
+           ON latest.team_id = adr.team_id
+          AND latest.agent_id = adr.agent_id
+          AND latest.task_id = adr.task_id
+          AND latest.latest_revision = adr.revision
+         WHERE adr.team_id = ?
+         ORDER BY adr.created_at DESC, adr.report_id DESC
+         LIMIT ?`
+      )
+      .all(team_id, team_id, safeLimit) as Record<string, unknown>[];
+    return rows.map((row) => hydrateAgentDecisionReport(row));
   }
 
   claimTask({ team_id, task_id, agent_id, expected_lock_version }: ClaimTaskInput): TaskMutationResult {

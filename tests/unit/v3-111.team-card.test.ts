@@ -155,6 +155,7 @@ test('V3-111 unit: team-card renders all modes with deterministic markdown secti
     assert.match(progressOne, /## Evidence Links/);
     assert.match(progressOne, /## Failure Highlights/);
     assert.match(progressOne, /@infra-dev/);
+    assert.equal(progressOne.includes('wave source='), false);
 
     assert.match(timeout, /^# Team Timeout/m);
     assert.match(timeout, /## Blockers Requiring Operator Action/);

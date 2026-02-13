@@ -2,13 +2,43 @@ import type { AgentRecord, TaskRecord, TeamRecord } from '../store/entities.js';
 import type { SqliteStore } from '../store/sqlite-store.js';
 import { createFairTaskQueue } from './queue.js';
 import { RuntimeGitIsolationManager } from './git-manager.js';
+import {
+  analyzeTaskDag,
+  type DagAnalysisResult,
+  type DagDependencyEdge
+} from './dag-analyzer.js';
 
 const DEFAULT_TICK_INTERVAL_MS = 250;
 const DEFAULT_READY_TASK_LIMIT = 200;
 const UNBOUNDED_READY_TASK_LIMIT = 2147483647;
+const DEFAULT_DAG_COMPUTE_WARN_MS = 25;
+const DEFAULT_DAG_TASK_WARN_COUNT = 250;
+const DEFAULT_DAG_EDGE_WARN_COUNT = 750;
+const IN_PROGRESS_STATUSES = new Set<TaskRecord['status']>([
+  'in_progress',
+  'queued',
+  'dispatching',
+  'executing',
+  'validating',
+  'integrating'
+]);
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  return fallback;
 }
 
 function toPositiveInt(value: unknown, fallback: number): number {
@@ -24,6 +54,16 @@ function normalizeCursor(cursor: number, size: number): number {
   return normalized < 0 ? normalized + size : normalized;
 }
 
+function buildDagSignature(tasks: TaskRecord[], edges: DagDependencyEdge[]): string {
+  const taskTokens = tasks
+    .map((task) => `${task.task_id}:${task.priority}:${task.created_at}`)
+    .sort(compareText);
+  const edgeTokens = edges
+    .map((edge) => `${edge.task_id}->${edge.depends_on_task_id}`)
+    .sort(compareText);
+  return `t:${taskTokens.join('|')}#e:${edgeTokens.join('|')}`;
+}
+
 function rotateAgents(agents: AgentRecord[], cursor: number): AgentRecord[] {
   if (agents.length <= 1) return [...agents];
   const start = normalizeCursor(cursor, agents.length);
@@ -33,11 +73,58 @@ function rotateAgents(agents: AgentRecord[], cursor: number): AgentRecord[] {
   ];
 }
 
+function summarizeTaskProgress(tasks: TaskRecord[]): {
+  total_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  completion_pct: number;
+} {
+  let inProgressTasks = 0;
+  let blockedTasks = 0;
+  let doneTasks = 0;
+  let cancelledTasks = 0;
+
+  for (const task of tasks) {
+    if (IN_PROGRESS_STATUSES.has(task.status)) {
+      inProgressTasks += 1;
+      continue;
+    }
+    if (task.status === 'blocked' || task.status === 'failed_terminal') {
+      blockedTasks += 1;
+      continue;
+    }
+    if (task.status === 'done') {
+      doneTasks += 1;
+      continue;
+    }
+    if (task.status === 'cancelled') {
+      cancelledTasks += 1;
+    }
+  }
+
+  const totalTasks = tasks.length;
+  const completionPct = totalTasks > 0
+    ? Math.round((doneTasks / totalTasks) * 100)
+    : 0;
+
+  return {
+    total_tasks: totalTasks,
+    in_progress_tasks: inProgressTasks,
+    blocked_tasks: blockedTasks,
+    done_tasks: doneTasks,
+    cancelled_tasks: cancelledTasks,
+    completion_pct: completionPct
+  };
+}
+
 export interface SchedulerOptions {
   store: SqliteStore;
   tickIntervalMs?: number;
   readyTaskLimit?: number;
   gitManager?: RuntimeGitIsolationManager;
+  resolveTeamPolicy?: (team: TeamRecord) => Record<string, unknown>;
 }
 
 export interface SchedulerDispatch {
@@ -67,15 +154,34 @@ export interface SchedulerTickResult {
   dispatches: SchedulerDispatch[];
 }
 
+interface TeamDagCacheEntry {
+  signature: string;
+  analysis: DagAnalysisResult;
+  task_count: number;
+  edge_count: number;
+  recomputed_at: string;
+}
+
+interface WaveDispatchDagContext {
+  dag: DagAnalysisResult;
+  cache_hit: boolean;
+  recomputed: boolean;
+  compute_ms: number;
+  task_count: number;
+  edge_count: number;
+}
+
 export class RuntimeScheduler {
   readonly store: SqliteStore;
   readonly tickIntervalMs: number;
   readonly readyTaskLimit: number;
   readonly gitManager: RuntimeGitIsolationManager;
+  readonly resolveTeamPolicy: (team: TeamRecord) => Record<string, unknown>;
 
   private timer: NodeJS.Timeout | null;
   private readonly queueCursorByTeam: Map<string, number>;
   private readonly agentCursorByTeam: Map<string, number>;
+  private readonly dagCacheByTeam: Map<string, TeamDagCacheEntry>;
   private ticking: boolean;
 
   constructor(options: SchedulerOptions) {
@@ -85,9 +191,11 @@ export class RuntimeScheduler {
     this.gitManager = options.gitManager ?? new RuntimeGitIsolationManager({
       store: this.store
     });
+    this.resolveTeamPolicy = options.resolveTeamPolicy ?? (() => ({}));
     this.timer = null;
     this.queueCursorByTeam = new Map();
     this.agentCursorByTeam = new Map();
+    this.dagCacheByTeam = new Map();
     this.ticking = false;
   }
 
@@ -124,6 +232,12 @@ export class RuntimeScheduler {
     this.ticking = true;
     try {
       const teams = this.store.listActiveTeams();
+      const activeTeamIds = new Set(teams.map((team) => team.team_id));
+      for (const teamId of this.dagCacheByTeam.keys()) {
+        if (!activeTeamIds.has(teamId)) {
+          this.dagCacheByTeam.delete(teamId);
+        }
+      }
       const inactiveTeams = this
         .store
         .listTeams()
@@ -187,12 +301,109 @@ export class RuntimeScheduler {
     const cleanup = this.gitManager.cleanupForTeam(team, agents, this.store.listTasks(team.team_id));
 
     // Always build fairness input from the full ready set, not a top-priority SQL slice.
+    const allTasks = this.store.listTasks(team.team_id);
     const readyTasks = this.store.listReadyTasks(team.team_id, UNBOUNDED_READY_TASK_LIMIT);
     const idleAgents = agents.filter((agent) => agent.status === 'idle');
+    const policy = this.resolveTeamPolicy(team);
+    const schedulerPolicy = asRecord(policy.scheduler);
+    const waveDispatchPolicy = asRecord(schedulerPolicy.wave_dispatch);
+    const waveDispatchEnabled = readBoolean(waveDispatchPolicy.enabled, false);
 
-    if (readyTasks.length > 0 && idleAgents.length > 0) {
+    let readyTasksForDispatch = readyTasks;
+    let dispatchMode: 'fair_queue' | 'wave_dispatch' | 'wave_dispatch_fallback' = 'fair_queue';
+    let selectedWave: number | null = null;
+    let cycleTaskIds: string[] = [];
+    let dagCacheHit = false;
+    let dagRecomputed = false;
+    let dagComputeMs = 0;
+    let dagTaskCount = 0;
+    let dagEdgeCount = 0;
+    let dagPerfGuardTriggered = false;
+    let dagPerfGuardThresholdMs = DEFAULT_DAG_COMPUTE_WARN_MS;
+    let dagPerfGuardThresholdTasks = DEFAULT_DAG_TASK_WARN_COUNT;
+    let dagPerfGuardThresholdEdges = DEFAULT_DAG_EDGE_WARN_COUNT;
+    if (waveDispatchEnabled) {
+      const perfGuardPolicy = asRecord(waveDispatchPolicy.perf_guard);
+      dagPerfGuardThresholdMs = toPositiveInt(
+        perfGuardPolicy.max_dag_compute_ms,
+        DEFAULT_DAG_COMPUTE_WARN_MS
+      );
+      dagPerfGuardThresholdTasks = toPositiveInt(
+        perfGuardPolicy.max_dag_tasks,
+        DEFAULT_DAG_TASK_WARN_COUNT
+      );
+      dagPerfGuardThresholdEdges = toPositiveInt(
+        perfGuardPolicy.max_dag_edges,
+        DEFAULT_DAG_EDGE_WARN_COUNT
+      );
+      const dependencyEdges = this
+        .store
+        .listTaskDependencyEdges(team.team_id)
+        .map((edge) => ({
+          task_id: String(edge.task_id ?? ''),
+          depends_on_task_id: String(edge.depends_on_task_id ?? '')
+        }))
+        .filter((edge) => edge.task_id.length > 0 && edge.depends_on_task_id.length > 0) as DagDependencyEdge[];
+      const dagContext = this.resolveWaveDispatchDag(team.team_id, allTasks, dependencyEdges);
+      const dag = dagContext.dag;
+      dagCacheHit = dagContext.cache_hit;
+      dagRecomputed = dagContext.recomputed;
+      dagComputeMs = dagContext.compute_ms;
+      dagTaskCount = dagContext.task_count;
+      dagEdgeCount = dagContext.edge_count;
+      if (dagRecomputed) {
+        dagPerfGuardTriggered = (
+          dagComputeMs > dagPerfGuardThresholdMs
+          || dagTaskCount > dagPerfGuardThresholdTasks
+          || dagEdgeCount > dagPerfGuardThresholdEdges
+        );
+        if (dagPerfGuardTriggered) {
+          this.store.logEvent({
+            team_id: team.team_id,
+            event_type: 'scheduler_wave_dispatch_perf_guard',
+            payload: {
+              dag_compute_ms: dagComputeMs,
+              dag_task_count: dagTaskCount,
+              dag_edge_count: dagEdgeCount,
+              max_dag_compute_ms: dagPerfGuardThresholdMs,
+              max_dag_tasks: dagPerfGuardThresholdTasks,
+              max_dag_edges: dagPerfGuardThresholdEdges
+            },
+            created_at: nowIso()
+          });
+        }
+      }
+      if (dag.has_cycle) {
+        dispatchMode = 'wave_dispatch_fallback';
+        cycleTaskIds = dag.cycle_task_ids;
+        this.store.logEvent({
+          team_id: team.team_id,
+          event_type: 'scheduler_wave_dispatch_fallback',
+          payload: {
+            reason: 'cycle_detected',
+            cycle_task_ids: cycleTaskIds.slice(0, 20)
+          },
+          created_at: nowIso()
+        });
+      } else if (readyTasks.length > 0) {
+        const readyWithDepth = readyTasks.map((task) => ({
+          task,
+          depth: Number(dag.depth_by_task_id[task.task_id] ?? 0)
+        }));
+        selectedWave = readyWithDepth.reduce((minDepth, item) => Math.min(minDepth, item.depth), Number.POSITIVE_INFINITY);
+        const waveScoped = readyWithDepth
+          .filter((item) => item.depth === selectedWave)
+          .map((item) => item.task);
+        if (waveScoped.length > 0) {
+          readyTasksForDispatch = waveScoped;
+          dispatchMode = 'wave_dispatch';
+        }
+      }
+    }
+
+    if (readyTasksForDispatch.length > 0 && idleAgents.length > 0) {
       const queueCursor = this.queueCursorByTeam.get(team.team_id) ?? 0;
-      const queue = createFairTaskQueue(readyTasks, queueCursor);
+      const queue = createFairTaskQueue(readyTasksForDispatch, queueCursor);
       const agentCursor = this.agentCursorByTeam.get(team.team_id) ?? 0;
       const rotatedAgents = rotateAgents(idleAgents, agentCursor);
 
@@ -252,12 +463,97 @@ export class RuntimeScheduler {
       );
     }
 
+    const previousWave = this.store.getTeamWaveState(team.team_id);
+    const taskSummary = summarizeTaskProgress(allTasks);
+    const readyTasksCount = this.store.listReadyTasks(team.team_id, UNBOUNDED_READY_TASK_LIMIT).length;
+    const shouldAdvanceWave = dispatches.length > 0 || recovered.recovered > 0 || cleanup.released_count > 0;
+    const nextWaveId = (previousWave?.wave_id ?? 0) + (shouldAdvanceWave ? 1 : 0);
+    const nextTickCount = (previousWave?.tick_count ?? 0) + 1;
+
+    this.store.upsertTeamWaveState({
+      team_id: team.team_id,
+      wave_id: nextWaveId,
+      tick_count: nextTickCount,
+      dispatched_count: dispatches.length,
+      recovered_tasks: recovered.recovered,
+      cleaned_assignments: cleanup.released_count,
+      dispatched_total: (previousWave?.dispatched_total ?? 0) + dispatches.length,
+      recovered_total: (previousWave?.recovered_total ?? 0) + recovered.recovered,
+      cleaned_total: (previousWave?.cleaned_total ?? 0) + cleanup.released_count,
+      ready_tasks: readyTasksCount,
+      in_progress_tasks: taskSummary.in_progress_tasks,
+      blocked_tasks: taskSummary.blocked_tasks,
+      done_tasks: taskSummary.done_tasks,
+      cancelled_tasks: taskSummary.cancelled_tasks,
+      total_tasks: taskSummary.total_tasks,
+      completion_pct: taskSummary.completion_pct,
+      metadata: {
+        queue_cursor: this.queueCursorByTeam.get(team.team_id) ?? 0,
+        agent_cursor: this.agentCursorByTeam.get(team.team_id) ?? 0,
+        dispatch_task_ids: dispatches.map((dispatch) => dispatch.task_id),
+        wave_dispatch_enabled: waveDispatchEnabled,
+        dispatch_mode: dispatchMode,
+        selected_wave: Number.isFinite(selectedWave ?? Number.NaN) ? selectedWave : null,
+        cycle_task_ids: cycleTaskIds.slice(0, 20),
+        dag_cache_hit: dagCacheHit,
+        dag_recomputed: dagRecomputed,
+        dag_compute_ms: dagComputeMs,
+        dag_task_count: dagTaskCount,
+        dag_edge_count: dagEdgeCount,
+        dag_perf_guard: {
+          triggered: dagPerfGuardTriggered,
+          max_dag_compute_ms: dagPerfGuardThresholdMs,
+          max_dag_tasks: dagPerfGuardThresholdTasks,
+          max_dag_edges: dagPerfGuardThresholdEdges
+        }
+      }
+    });
+
     return {
       team_id: team.team_id,
       recovered_tasks: recovered.recovered,
       cleaned_assignments: cleanup.released_count,
       dispatched_count: dispatches.length,
       dispatches
+    };
+  }
+
+  private resolveWaveDispatchDag(
+    teamId: string,
+    tasks: TaskRecord[],
+    dependencyEdges: DagDependencyEdge[]
+  ): WaveDispatchDagContext {
+    const signature = buildDagSignature(tasks, dependencyEdges);
+    const cached = this.dagCacheByTeam.get(teamId);
+    if (cached && cached.signature === signature) {
+      return {
+        dag: cached.analysis,
+        cache_hit: true,
+        recomputed: false,
+        compute_ms: 0,
+        task_count: cached.task_count,
+        edge_count: cached.edge_count
+      };
+    }
+
+    const startedAt = Date.now();
+    const dag = analyzeTaskDag(tasks, dependencyEdges);
+    const computeMs = Math.max(0, Date.now() - startedAt);
+    this.dagCacheByTeam.set(teamId, {
+      signature,
+      analysis: dag,
+      task_count: tasks.length,
+      edge_count: dependencyEdges.length,
+      recomputed_at: nowIso()
+    });
+
+    return {
+      dag,
+      cache_hit: false,
+      recomputed: true,
+      compute_ms: computeMs,
+      task_count: tasks.length,
+      edge_count: dependencyEdges.length
     };
   }
 

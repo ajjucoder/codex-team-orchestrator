@@ -1,7 +1,7 @@
 export type TeamStatus = 'active' | 'idle' | 'paused' | 'finalized' | 'archived';
 export type TeamMode = 'default' | 'delegate' | 'plan';
 export type AgentStatus = 'idle' | 'busy' | 'offline';
-export type DeliveryMode = 'direct' | 'broadcast';
+export type DeliveryMode = 'direct' | 'broadcast' | 'group';
 export type TaskExecutionStatus =
   | 'queued'
   | 'dispatching'
@@ -90,12 +90,89 @@ export interface AgentCreateInput {
   metadata?: Record<string, unknown>;
 }
 
+export type WorkerRuntimeSessionState = 'active' | 'idle' | 'interrupted' | 'offline' | 'failed';
+
+export interface WorkerRuntimeSessionRecord {
+  team_id: string;
+  agent_id: string;
+  worker_id: string;
+  provider: string;
+  transport_backend: string | null;
+  session_ref: string | null;
+  pane_ref: string | null;
+  lifecycle_state: WorkerRuntimeSessionState;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string | null;
+}
+
+export interface UpsertWorkerRuntimeSessionInput {
+  team_id: string;
+  agent_id: string;
+  worker_id: string;
+  provider: string;
+  transport_backend?: string | null;
+  session_ref?: string | null;
+  pane_ref?: string | null;
+  lifecycle_state?: WorkerRuntimeSessionState;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+  last_seen_at?: string | null;
+}
+
+export interface TeamWaveStateRecord {
+  team_id: string;
+  wave_id: number;
+  tick_count: number;
+  dispatched_count: number;
+  recovered_tasks: number;
+  cleaned_assignments: number;
+  dispatched_total: number;
+  recovered_total: number;
+  cleaned_total: number;
+  ready_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  total_tasks: number;
+  completion_pct: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertTeamWaveStateInput {
+  team_id: string;
+  wave_id: number;
+  tick_count: number;
+  dispatched_count: number;
+  recovered_tasks: number;
+  cleaned_assignments: number;
+  dispatched_total: number;
+  recovered_total: number;
+  cleaned_total: number;
+  ready_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  total_tasks: number;
+  completion_pct?: number;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MessageRecord {
   message_id: string;
   team_id: string;
   from_agent_id: string;
   to_agent_id: string | null;
   delivery_mode: DeliveryMode;
+  recipient_agent_ids?: string[];
   payload: MessagePayload;
   idempotency_key: string;
   created_at: string;
@@ -246,6 +323,32 @@ export interface RunEventRecord {
   event_type: string;
   payload?: Record<string, unknown>;
   created_at?: string;
+}
+
+export interface AgentDecisionReportRecord {
+  report_id: string;
+  team_id: string;
+  agent_id: string;
+  task_id: string;
+  revision: number;
+  decision: string;
+  summary: string;
+  confidence: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CreateAgentDecisionReportInput {
+  report_id: string;
+  team_id: string;
+  agent_id: string;
+  task_id: string;
+  revision: number;
+  decision: string;
+  summary: string;
+  confidence?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface UsageSample {

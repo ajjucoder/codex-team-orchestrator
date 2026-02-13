@@ -8,7 +8,12 @@
     "team_id": { "type": "string", "pattern": "^team_[A-Za-z0-9_-]+$" },
     "from_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
     "to_agent_id": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
-    "delivery_mode": { "type": "string", "enum": ["direct", "broadcast"] },
+    "delivery_mode": { "type": "string", "enum": ["direct", "broadcast", "group"] },
+    "recipient_agent_ids": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^agent_[A-Za-z0-9_-]+$" },
+      "uniqueItems": true
+    },
     "idempotency_key": { "type": "string" },
     "payload": {
       "type": "object",
@@ -48,6 +53,10 @@
     {
       "if": { "properties": { "delivery_mode": { "const": "direct" } } },
       "then": { "required": ["to_agent_id"] }
+    },
+    {
+      "if": { "properties": { "delivery_mode": { "const": "group" } } },
+      "then": { "required": ["recipient_agent_ids"] }
     }
   ]
 }

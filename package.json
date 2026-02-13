@@ -25,7 +25,8 @@
     "release:package": "./scripts/package-release.sh",
     "release:check": "./scripts/release-ready.sh",
     "team:tui": "node --import tsx scripts/team-tui.ts",
-    "team:card": "node --import tsx scripts/team-card.ts"
+    "team:card": "node --import tsx scripts/team-card.ts",
+    "team:tmux-ui": "node --import tsx scripts/team-tmux-ui.ts"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",

@@ -6,6 +6,8 @@ import { redactSensitiveValue } from './guardrails.js';
 import type { HookContext, HookDispatchResult, HookEngine } from './hooks.js';
 import type { RunEventRecord } from '../store/entities.js';
 import type { SqliteStore } from '../store/sqlite-store.js';
+import type { WorkerAdapter } from '../runtime/worker-adapter.js';
+import type { RuntimeGitIsolationManager } from '../runtime/git-manager.js';
 
 type ToolInput = Record<string, unknown>;
 
@@ -42,6 +44,10 @@ interface RegisteredTool {
 interface ServerConstructorOptions {
   store: StoreAdapter;
   logger: LoggerAdapter;
+  workerAdapter?: WorkerAdapter;
+  gitManager?: RuntimeGitIsolationManager;
+  runtimeMode?: 'host_orchestrated_default' | 'managed_runtime';
+  managedRuntimeEnabled?: boolean;
 }
 
 interface PolicyEngineAdapter {
@@ -145,14 +151,29 @@ export class MCPServer {
   readonly store: StoreAdapter;
   readonly logger: LoggerAdapter;
   readonly tools: Map<string, RegisteredTool>;
+  readonly runtimeMode: 'host_orchestrated_default' | 'managed_runtime';
+  readonly managedRuntimeEnabled: boolean;
+  readonly workerAdapter?: WorkerAdapter;
+  readonly gitManager?: RuntimeGitIsolationManager;
   startedAt: string | null;
   policyEngine?: unknown;
   hookEngine?: HookEngine;
 
-  constructor({ store, logger }: ServerConstructorOptions) {
+  constructor({
+    store,
+    logger,
+    workerAdapter,
+    gitManager,
+    runtimeMode,
+    managedRuntimeEnabled
+  }: ServerConstructorOptions) {
     this.store = store;
     this.logger = logger;
     this.tools = new Map();
+    this.workerAdapter = workerAdapter;
+    this.gitManager = gitManager;
+    this.runtimeMode = runtimeMode ?? 'host_orchestrated_default';
+    this.managedRuntimeEnabled = managedRuntimeEnabled ?? this.runtimeMode === 'managed_runtime';
     this.startedAt = null;
   }
 
@@ -161,7 +182,12 @@ export class MCPServer {
     this.startedAt = nowIso();
     this.logger.log({
       event_type: 'server_started',
-      payload: { started_at: this.startedAt }
+      payload: {
+        started_at: this.startedAt,
+        runtime_mode: this.runtimeMode,
+        managed_runtime_enabled: this.managedRuntimeEnabled,
+        worker_adapter_configured: Boolean(this.workerAdapter)
+      }
     });
     return { ok: true, started_at: this.startedAt };
   }

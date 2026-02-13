@@ -1,6 +1,8 @@
 import type { SqliteStore } from '../../store/sqlite-store.js';
 import type { PolicyEngine } from '../policy-engine.js';
 import type { HookEngine } from '../hooks.js';
+import type { WorkerAdapter } from '../../runtime/worker-adapter.js';
+import type { RuntimeGitIsolationManager } from '../../runtime/git-manager.js';
 
 export type ToolInput = Record<string, unknown>;
 export type ToolContext = Record<string, unknown>;
@@ -18,8 +20,13 @@ export type ToolServerLike = {
   logger: {
     log(event: Record<string, unknown>): Record<string, unknown>;
   };
+  startedAt?: string | null;
   policyEngine?: PolicyEngine;
   hookEngine?: HookEngine;
+  workerAdapter?: WorkerAdapter;
+  gitManager?: RuntimeGitIsolationManager;
+  runtimeMode?: 'host_orchestrated_default' | 'managed_runtime';
+  managedRuntimeEnabled?: boolean;
   registerTool(name: string, schemaFileName: string, handler: ToolHandler): void;
   callTool(name: string, input: ToolInput, context?: ToolContext): ToolResult;
   tools?: Map<string, unknown>;

@@ -118,6 +118,7 @@ export interface TeamUiSnapshot {
     in_progress_tasks: number;
     blocked_tasks: number;
     pending_inbox: number;
+    wave: TeamSnapshotWave | null;
   };
   workers_roster: TeamSnapshotWorker[];
   worker_tree: string[];
@@ -128,6 +129,26 @@ export interface TeamUiSnapshot {
   evidence_links: TeamSnapshotEvidenceLink[];
   failure_highlights: TeamSnapshotFailureHighlight[];
   feed: TeamSnapshotFeedItem[];
+}
+
+export interface TeamSnapshotWave {
+  source: string;
+  wave_id: number;
+  tick_count: number;
+  dispatched_count: number;
+  recovered_tasks: number;
+  cleaned_assignments: number;
+  dispatched_total: number;
+  recovered_total: number;
+  cleaned_total: number;
+  ready_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  total_tasks: number;
+  completion_pct: number;
+  updated_at: string | null;
 }
 
 interface LoadOptions {
@@ -311,6 +332,30 @@ function parseFeedItem(entry: unknown): Omit<TeamSnapshotFeedItem, 'kind'> {
     ok: readBooleanOrNull(row.ok),
     summary: readString(row.summary),
     replay_link: readOptionalString(row.replay_link)
+  };
+}
+
+function parseWaveMetrics(entry: unknown): TeamSnapshotWave | null {
+  const row = asRecord(entry);
+  if (Object.keys(row).length === 0) return null;
+  return {
+    source: readString(row.source, 'derived'),
+    wave_id: readNumber(row.wave_id),
+    tick_count: readNumber(row.tick_count),
+    dispatched_count: readNumber(row.dispatched_count),
+    recovered_tasks: readNumber(row.recovered_tasks),
+    cleaned_assignments: readNumber(row.cleaned_assignments),
+    dispatched_total: readNumber(row.dispatched_total),
+    recovered_total: readNumber(row.recovered_total),
+    cleaned_total: readNumber(row.cleaned_total),
+    ready_tasks: readNumber(row.ready_tasks),
+    in_progress_tasks: readNumber(row.in_progress_tasks),
+    blocked_tasks: readNumber(row.blocked_tasks),
+    done_tasks: readNumber(row.done_tasks),
+    cancelled_tasks: readNumber(row.cancelled_tasks),
+    total_tasks: readNumber(row.total_tasks),
+    completion_pct: readNumber(row.completion_pct),
+    updated_at: readOptionalString(row.updated_at)
   };
 }
 
@@ -561,6 +606,8 @@ export function loadTeamUiSnapshot(store: SqliteStore, teamId: string, options: 
   const done = readNumber(counts.done);
   const cancelled = readNumber(counts.cancelled);
   const total = readNumber(tasksRecord.total);
+  const progressRecord = asRecord(state.progress);
+  const waveMetrics = parseWaveMetrics(progressRecord.wave);
 
   const activeTasks = spotlight
     .filter((task) => ACTIVE_TASK_STATUSES.has(task.status))
@@ -595,14 +642,15 @@ export function loadTeamUiSnapshot(store: SqliteStore, teamId: string, options: 
       failed_terminal: readNumber(counts.failed_terminal)
     },
     progress: {
-      completion_pct: readNumber(asRecord(state.progress).completion_pct),
-      done_tasks: readNumber(asRecord(state.progress).done_tasks, done),
-      total_tasks: readNumber(asRecord(state.progress).total_tasks, total),
-      queue_depth: readNumber(asRecord(state.progress).queue_depth),
-      ready_tasks: readNumber(asRecord(state.progress).ready_tasks),
-      in_progress_tasks: readNumber(asRecord(state.progress).in_progress_tasks),
-      blocked_tasks: readNumber(asRecord(state.progress).blocked_tasks),
-      pending_inbox: readNumber(asRecord(state.progress).pending_inbox)
+      completion_pct: readNumber(progressRecord.completion_pct),
+      done_tasks: readNumber(progressRecord.done_tasks, done),
+      total_tasks: readNumber(progressRecord.total_tasks, total),
+      queue_depth: readNumber(progressRecord.queue_depth),
+      ready_tasks: readNumber(progressRecord.ready_tasks),
+      in_progress_tasks: readNumber(progressRecord.in_progress_tasks),
+      blocked_tasks: readNumber(progressRecord.blocked_tasks),
+      pending_inbox: readNumber(progressRecord.pending_inbox),
+      wave: waveMetrics
     },
     workers_roster: roster,
     worker_tree: workerTree,

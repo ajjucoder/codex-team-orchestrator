@@ -1,304 +1,500 @@
-# Continuation Plan: Auto Parallel Gate Fallback (2026-02-12)
+# ATX End-to-End Implementation Plan
 
-Date: 2026-02-12  
-Branch: `codex/auto-parallel-gate-fallback`  
-Execution mode: `single-agent`
-
-## Objective
-
-Add a strict preflight parallelization gate for `team_trigger` so agent teams is only used when work is parallelizable; otherwise route immediately to normal mode with a clear recommendation.
-
-## Tickets
-
-| Ticket ID | Tier | Owner | Scope / Files | Acceptance Criteria | Linked Tests | Status |
-|---|---|---|---|---|---|---|
-| `ATG-P1-001` | P1 | Codex | `mcp/server/parallel-gate.ts`, `mcp/server/tools/trigger.ts` | `team_trigger` evaluates strict gate before `team_start`; rejected requests return `accepted=false`, `route=normal_mode`, and no team startup | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts` | done |
-| `ATG-P1-002` | P1 | Codex | `mcp/schemas/contracts.ts`, `profiles/default.team.yaml`, `profiles/fast.team.yaml`, `profiles/deep.team.yaml` | trigger output contract includes fallback fields (`accepted`, `route`, `parallel_gate`, `recommendation`); profile-driven gate thresholds configured | `node --import tsx --test tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` | done |
-| `ATG-P2-001` | P2 | Codex | `tests/unit/v3-112.parallel-gate.test.ts`, `tests/unit/at015.trigger.test.ts`, `tests/integration/at015.trigger.integration.test.ts`, `tests/integration/v3-109.staffing.integration.test.ts`, `docs/AT-015.md`, `skills/agent-teams/SKILL.md` | unit/integration coverage includes accepted+rejected trigger paths; docs/skill reflect strict gate and normal-mode fallback behavior | `node --import tsx --test tests/unit/v3-112.parallel-gate.test.ts tests/unit/at015.trigger.test.ts`, `node --import tsx --test tests/integration/at015.trigger.integration.test.ts tests/integration/v3-109.staffing.integration.test.ts` | done |
-
-## Notes
-
-- Known unrelated baseline issue remains out of scope for this ticket set: `tests/unit/v3-005.git-isolation.test.ts` (`INTEGRATION_WORKTREE_NAME` reference) from prior branch history.
-
-# CTO End-to-End Implementation Plan (Agent Teams Remediation Run)
-
-Date: 2026-02-11
-Prepared from: user remediation plan + codebase validation (`mcp/*`, `tests/*`)
-Objective: implement and verify six remediation findings covering approvals, dispatch reliability, executor terminal semantics, command guardrails, optimizer budgets, and role-aware task paging.
+Date: 2026-02-12
+Prepared from:
+- User-provided research bundle (Reddit/GitHub/TowardsAI links in session context)
+- Internal architecture review against current repo (`README.md`, `mcp/runtime/*`, `mcp/server/*`, `mcp/store/*`, `scripts/*`)
+- Codex app review findings provided by user in-session
+Objective: deliver a production-safe Agent Teams upgrade that adds real-time worker UX, DAG-aware execution, mention/group collaboration, structured decision reporting, and cross-model routing without breaking existing deterministic contracts.
 
 ## 0) Execution Strategy (Required)
 
-1. Execution mode: `parallel-agent-team`
-2. Run settings:
-   - `max_threads`: `6`
-   - `run_id`: `run-20260211-201619`
-   - `base_branch`: `codex/implementation-fix-agentteam`
-3. Lead model: `GPT-5 Codex`
-4. Worker model policy:
-   - `P0`: n/a for this run
-   - `P1/P2`: mixed implementer lanes with lead integration and full-suite validation
-5. Priority order rule: `P0 -> P1 -> P2` (this run contains only `P1` and `P2`)
-6. Parallelization rule:
-   - execute dependency-safe lane groups in parallel
-   - keep tightly coupled store/tool changes in one lane
-7. Tracking rule:
-   - canonical tracker: `docs/plans/SPRINT_PROGRESS.md`
+1. Execution mode: single-agent
+2. Lead model: GPT-5 Codex
+3. Worker model policy: same as lead
+4. Teaming rule:
+   - Execute all tickets in normal single-agent mode only.
+   - Do not use agent-team/parallel-agent-team implementation lanes for this backlog run.
+5. Order rule: always execute by priority `P0 -> P1 -> P2`.
 
-## 0.1) Continuation Baseline (Required for Non-Fresh Runs)
+## 1) Target Outcome
 
-1. Existing baseline delivery from prior program remains complete (`CTO-P0-*`, `CTO-P1-*`, `CTO-P2-*`).
-2. This run is a targeted remediation continuation, not a restart.
-3. New remediation backlog for this run:
-   - `CTO-P1-009`
-   - `CTO-P1-010`
-   - `CTO-P1-011`
-   - `CTO-P1-012`
-   - `CTO-P2-007`
-   - `CTO-P2-008`
+1. Runtime architecture is explicit and coherent: either host-driven orchestration remains default with an optional managed-runtime mode, or equivalent documented contract.
+2. New capabilities (tmux/headless transport, wave scheduler telemetry, group mentions, decision reports, model routing) are persistent, secure, and schema-safe.
+3. Existing deterministic operator surfaces (`team-tui`, `team-card`, `team_ui_state`) remain backward-compatible and test-stable.
 
-## 1) Worker Topology + Isolation (Required)
+## 2) Phases / Workstreams
 
-1. Worker roles:
-   - `lead`: orchestration, integration, acceptance
-   - `implementer-1`: policy + executor
-   - `implementer-2`: lifecycle reliability + task-board role paging
-   - `implementer-3`: guardrails + optimizer
-2. Branch/worktree naming:
-   - Branch: `team/run-20260211-201619/<role>-<index>`
-   - Worktree: `.tmp/agent-teams/run-20260211-201619/<role>-<index>`
-3. Isolation policy:
-   - no implementation on `main`
-   - worker file ownership boundaries enforced by assignment
-   - no destructive git operations
+## Workstream A: Architecture + Contracts
+Owner: platform-architecture
 
-## 2) Parallelization Design (Required)
-
-### Lane Topology
-
-| Lane | Focus | Candidate Tickets |
-|---|---|---|
-| A | Policy + executor validation | `CTO-P1-009`, `CTO-P1-010` |
-| B | Direct-message reliability + role paging | `CTO-P1-011`, `CTO-P2-008` |
-| C | Command guardrails + optimizer budgeting | `CTO-P1-012`, `CTO-P2-007` |
-
-### Dependency Waves
-
-1. Wave 1: lane A/B/C implementation in parallel
-2. Wave 2: lead integration + conflict resolution
-3. Wave 3: full validation pass (unit + integration + typecheck)
-
-### Dependency Table
-
-| Ticket | Depends On | Lane | Wave | Can Parallelize With |
-|---|---|---|---|---|
-| `CTO-P1-009` | none | A | 1 | `CTO-P1-011`, `CTO-P1-012`, `CTO-P2-007`, `CTO-P2-008` |
-| `CTO-P1-010` | none | A | 1 | `CTO-P1-011`, `CTO-P1-012`, `CTO-P2-007`, `CTO-P2-008` |
-| `CTO-P1-011` | none | B | 1 | `CTO-P1-009`, `CTO-P1-010`, `CTO-P1-012`, `CTO-P2-007` |
-| `CTO-P2-008` | `CTO-P1-011` (shared store/tool context) | B | 1 | `CTO-P1-009`, `CTO-P1-010`, `CTO-P1-012`, `CTO-P2-007` |
-| `CTO-P1-012` | none | C | 1 | `CTO-P1-009`, `CTO-P1-010`, `CTO-P1-011`, `CTO-P2-008` |
-| `CTO-P2-007` | none | C | 1 | `CTO-P1-009`, `CTO-P1-010`, `CTO-P1-011`, `CTO-P2-008` |
-
-## 3) Workstreams
-
-## Workstream A: Policy + Runtime Validation
-Owner: `W-Implementer-1` with lead integration
-
-### A1. Approval gate dedupe/latest semantics
+### A1. Runtime contract decision + ADR
 - Files:
-  - `mcp/server/policy-hooks.ts`
-  - `tests/unit/v3-203.approvals.test.ts`
+  - `README.md`
+  - `docs/proposals/agent-runtime-contract.md` (new)
+  - `docs/codex-agent-teams-ui.md`
 - Implement:
-  - dedupe approval chain by `agent_id`
-  - latest decision precedence using parseable `decided_at` with input-order fallback
-  - threshold checks based on deduped approvals only
-  - metadata counters for raw/unique chain size
+  - Define canonical runtime model: `host_orchestrated_default` with optional `managed_runtime` feature flag.
+  - Document boundaries for worker spawning, persistence ownership, and UI behavior contracts.
+- Required behavior:
+  - No ambiguity between documentation and runtime bootstrap behavior.
 
-### A2. Executor terminal-state validation logic
+### A2. Contract/schema extension plan
 - Files:
-  - `mcp/runtime/executor.ts`
-  - `tests/unit/v3-006.execution-loop.test.ts`
-  - `tests/integration/v3-006.autonomous-loop.integration.test.ts`
+  - `mcp/schemas/contracts.ts`
+  - `mcp/schemas/entities/message.schema.json`
+  - `mcp/schemas/tools/*.schema.json` (new and updated)
 - Implement:
-  - terminal success/failure classifier
-  - non-terminal validation skip path (leave task `in_progress`)
-  - terminal failure -> blocked
-  - terminal success requires evidence signal before done
+  - Add formal contract entries for new tools and payload fields before feature coding.
 
-## Workstream B: Reliability + Task Queue Correctness
-Owner: `W-Implementer-2` with lead integration
+## Workstream B: Runtime Transport + Persistence
+Owner: runtime-core
 
-### B1. team_send compensation rollback
+### B1. Transport bootstrap wiring
+- Files:
+  - `mcp/server/index.ts`
+  - `mcp/server/server.ts`
+  - `mcp/server/tools/agent-lifecycle.ts`
+- Implement:
+  - Wire default worker adapter/transport provisioning behind explicit options/flags.
+  - Preserve existing behavior when transport is not configured.
+
+### B2. Durable worker runtime session state
+- Files:
+  - `mcp/store/migrations/009_worker_runtime_sessions.sql` (new)
+  - `mcp/store/entities.ts`
+  - `mcp/store/sqlite-store.ts`
+  - `mcp/server/tools/agent-lifecycle.ts`
+- Implement:
+  - Persist `worker_id`, transport/backend, pane/session metadata, and lifecycle state.
+  - Replace in-memory-only `workerSessionByAgentId` as source of truth.
+
+### B3. Safe instruction delivery protocol
+- Files:
+  - `mcp/runtime/transports/tmux-transport.ts` (new)
+  - `mcp/runtime/transports/headless-transport.ts` (new)
+  - `mcp/runtime/tmux-manager.ts` (new)
+- Implement:
+  - Avoid raw shell-injection-prone `sendKeys` for arbitrary payloads.
+  - Use framed instruction channel (stdin/file/socket) with escaping and size limits.
+
+## Workstream C: Scheduler + Wave Telemetry
+Owner: scheduler-core
+
+### C1. DAG analyzer and flagged wave dispatch
+- Files:
+  - `mcp/runtime/dag-analyzer.ts` (new)
+  - `mcp/runtime/scheduler.ts`
+  - `profiles/default.team.yaml`
+  - `profiles/fast.team.yaml`
+  - `profiles/deep.team.yaml`
+- Implement:
+  - Add cycle-safe DAG analysis and wave-scoped dispatch behind `scheduler.wave_dispatch.enabled`.
+  - Preserve current fair queue fallback and starvation guarantees.
+
+### C2. Persisted wave telemetry for cross-process UI
+- Files:
+  - `mcp/store/migrations/010_team_wave_state.sql` (new)
+  - `mcp/store/sqlite-store.ts`
+  - `mcp/server/team-ui-state.ts`
+- Implement:
+  - Persist current wave metadata to store/events so `team_ui_state` works across processes.
+
+## Workstream D: Messaging + Collaboration
+Owner: collaboration-runtime
+
+### D1. Group delivery semantics and idempotency redesign
+- Files:
+  - `mcp/store/entities.ts`
+  - `mcp/store/sqlite-store.ts`
+  - `mcp/schemas/entities/message.schema.json`
+  - `mcp/schemas/contracts.ts`
+- Implement:
+  - Introduce `group` mode with recipient-set-scoped route key and idempotency scope hash.
+  - Prevent collisions where `to_agent_id=null` but recipients differ.
+
+### D2. @mention parser and team_group_send
+- Files:
+  - `mcp/server/mention-parser.ts` (new)
+  - `mcp/server/tools/agent-lifecycle.ts`
+  - `mcp/schemas/tools/team_group_send.schema.json` (new)
+- Implement:
+  - Parse and resolve `@agent`, `@role`, `@all`; dedupe recipients.
+  - Preserve immediate worker adapter dispatch semantics for active recipients.
+
+### D3. Structured decision reporting as first-class records
+- Files:
+  - `mcp/store/migrations/011_agent_decision_reports.sql` (new)
+  - `mcp/store/sqlite-store.ts`
+  - `mcp/server/decision-tracker.ts` (new)
+  - `mcp/server/tools/agent-lifecycle.ts`
+  - `mcp/schemas/tools/team_agent_report.schema.json` (new)
+- Implement:
+  - Store per-agent, per-task, versioned reports (no metadata overwrite).
+
+## Workstream E: UI/UX Surfaces
+Owner: operator-experience
+
+### E1. Preserve deterministic `team-tui`/`team-card` contracts
+- Files:
+  - `scripts/team-tui.ts`
+  - `scripts/team-card.ts`
+  - `scripts/team-ui-view.ts`
+- Implement:
+  - Keep existing one-shot deterministic output contract unchanged.
+  - Add new fields only in backward-compatible manner.
+
+### E2. Add separate tmux visualization sidecar
+- Files:
+  - `scripts/team-tmux-ui.ts` (new)
+  - `docs/operator-console.md`
+- Implement:
+  - Build tmux-first real-time panel as separate entrypoint to avoid destabilizing deterministic CLI contract.
+
+## Workstream F: Model Routing + QA + Release
+Owner: runtime-integration
+
+### F1. Extend existing model routing contract
 - Files:
   - `mcp/server/tools/agent-lifecycle.ts`
-  - `mcp/store/sqlite-store.ts`
-  - `tests/unit/at006.agent-lifecycle.test.ts`
-  - `tests/integration/v3-003.adapter.integration.test.ts`
+  - `mcp/server/staffing-planner.ts`
+  - `profiles/*.team.yaml`
 - Implement:
-  - transactional rollback API for inserted message/inbox rows
-  - rollback + telemetry event on adapter send failure
-  - failure envelope includes adapter error + rollback outcome
+  - Reuse existing `model_routing` policy path; extend keys compatibly for backend selection.
+  - Avoid parallel routing systems.
 
-### B2. role-aware ready-task retrieval before limit
+### F2. Reliability/performance hardening
 - Files:
-  - `mcp/store/sqlite-store.ts`
-  - `mcp/server/tools/task-board.ts`
-  - `tests/unit/at007.task-board.test.ts`
-  - `tests/integration/at007.task-board.integration.test.ts`
+  - `mcp/runtime/scheduler.ts`
+  - `mcp/runtime/rebalancer.ts`
+  - `tests/chaos/*`
 - Implement:
-  - `listReadyTasksByRole(teamId, requiredRole, limit)` query
-  - `team_task_next` role branch uses role-aware query before limiting
+  - Incremental DAG recomputation, performance guards, restart/failover coverage.
 
-## Workstream C: Guardrails + Optimizer
-Owner: `W-Implementer-3` with lead integration
-
-### C1. allow-prefix boundary-safe matching and chain blocking
+### F3. Docs/release gating updates
 - Files:
-  - `mcp/server/guardrails.ts`
-  - `tests/unit/v3-106.security.test.ts`
-  - `tests/integration/v3-106.security.integration.test.ts`
+  - `docs/AGENT_TEAMS_HYBRID_UX_FEATURE.md`
+  - `docs/AGENT_TEAMS_INDUSTRY_PRACTICES.md`
+  - `scripts/release-ready.sh`
 - Implement:
-  - boundary-aware prefix matcher (exact or whitespace boundary)
-  - chained operator block (`&&`, `||`, `;`, `|`) in allow-prefix path
+  - Add gating for new schemas, migrations, and deterministic-contract checks.
 
-### C2. runtime-capped optimizer token budget
-- Files:
-  - `mcp/server/budget-controller.ts`
-  - `tests/unit/v3-105.optimizer.test.ts`
-  - `tests/integration/v3-105.optimizer.integration.test.ts`
-- Implement:
-  - `token_budget = min(policy_soft_limit, floor(max(0, budget_tokens_remaining)))`
-  - consistent usage in constraints, `meets_slo.cost`, and scoring
+## 3) Delivery Plan
 
-## 4) Delivery Plan (Wave-Based)
+## Week 1
+1. `ATX-P0-001` through `ATX-P0-003` (architecture + bootstrap + persistence foundation).
+2. Foundational tests and migration verification.
+3. Exit gate: transport bootstrap deterministic, restart-safe session recovery verified.
 
-## Wave 1 (Parallel)
-1. lane A/B/C implementations
-2. focused test updates per ticket
-3. exit gate: lane-level unit tests pass
+## Week 2
+1. `ATX-P0-004` through `ATX-P0-007` (secure transport, wave telemetry persistence, group idempotency, deterministic UI protection).
+2. Security + compatibility integration tests.
+3. Exit gate: no regression in `v3-111` deterministic suite.
 
-## Wave 2 (Integration)
-1. integrate lane outputs onto `codex/implementation-fix-agentteam`
-2. reconcile overlap in `sqlite-store.ts` and related tests
-3. exit gate: integrated unit + integration runs pass
+## Week 3
+1. `ATX-P1-001` through `ATX-P1-004` (wave dispatch flag, mention/group tools, decision reports, model-routing extension).
+2. Cross-process and contract-level integration tests.
+3. Exit gate: full unit + integration suites pass with flags on/off.
 
-## Wave 3 (Acceptance)
-1. run full unit suite (`npm run test:unit:ts -- ...`)
-2. run full integration suite (`npm run test:integration:ts -- ...`)
-3. run `npm run typecheck`
-4. exit gate: all pass, no open blockers
+## Week 4+
+1. `ATX-P1-005`, `ATX-P1-006`, and all `P2` hardening tickets.
+2. Chaos/perf/release gate validation.
+3. Exit gate: release-ready checks green with new feature set enabled.
 
-## 5) Definition of Done (Required)
+## 4) Definition of Done (Required)
 
-1. Ticket must include linked passing test evidence, or explicit blocker note.
-2. Ticket must include touched files and verification commands.
-3. Critical behavior changes must be traceable via deterministic tests.
-4. No schema-breaking external tool API changes.
+1. Regression test fails before fix and passes after fix (or equivalent new coverage where pre-fail cannot exist).
+2. No silent fallback for critical logic.
+3. Explicit statuses propagate to final output.
+4. Evidence/provenance is present for critical values.
+5. Ticket cannot be marked `done` without linked passing test evidence, or explicit blocker note.
+6. Ticket cannot be marked `done` without git evidence:
+   - `commit_sha`
+   - `pushed_branch`
+   - `pr_link` (or explicit note if PR not used)
 
-## 6) Worker Lifecycle + Anti-Stall Protocol (Required)
+## 5) Git Workflow Policy (Required)
 
-1. Worker state machine: `pending_init | running | completed | failed`
-2. Wait timeout windows: `>=120000ms`
-3. Timeout handling:
-   - emit `still running (timeout window) running=<n> completed=<n> failed=<n>`
-   - send structured heartbeat request (`ticket_id`, `status`, `files_touched`, `tests_run`, `risks_or_blockers`, `eta_minutes`)
-4. This run observed timeout windows and heartbeat recovery before lead integration takeover.
+1. Implement each ticket, run linked tests, then create an atomic commit.
+2. Commit message format: `ATX-P[0|1|2]-###: <short summary>`.
+3. Push every completed ticket to remote (feature/worker branch preferred).
+4. Keep one ticket per commit whenever reasonable.
+5. Never use destructive git operations.
 
-## 7) Ticketing System
+## 6) Ticketing System
 
-Ticket format used:
-- `ID`: `CTO-P1-009` ... `CTO-P2-008`
-- `Owner`: worker lane + lead integration
-- `Scope`: explicit file list
-- `Acceptance`: objective assertions in linked unit/integration tests
-- `Linked Tests`: command + file mapping
-- `Status`: `done`
+Ticket format:
+- `ID`: `ATX-P0-###`, `ATX-P1-###`, `ATX-P2-###`
+- `Title`: short defect/risk statement
+- `Owner`: person/agent role
+- `Risk Link`: source finding ID(s)
+- `Root Cause`: technical cause
+- `Scope`: files/modules
+- `Acceptance Criteria`: objective pass/fail
+- `Linked Tests`: test IDs and commands
+- `Status`: `todo | in_progress | review | blocked | done`
+- `Git Evidence`: `commit_sha`, `pushed_branch`, `pr_link`
+- `Execution Evidence`: CI/test output
 
-## 8) Master Ticket Backlog
+## 7) Master Ticket Backlog
+
+## P0 Tickets (Blocking)
+
+| Ticket ID | Title | Owner | Key Files | Linked Tests | Status |
+|---|---|---|---|---|---|
+| `ATX-P0-001` | Lock runtime architecture contract + ADR | platform-architecture | `README.md`, `docs/proposals/agent-runtime-contract.md`, `docs/codex-agent-teams-ui.md` | `T-ATX-P0-001` | todo |
+| `ATX-P0-002` | Bootstrap worker transport/adapter wiring | runtime-core | `mcp/server/index.ts`, `mcp/server/server.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-ATX-P0-002` | todo |
+| `ATX-P0-003` | Persist worker runtime sessions | runtime-core | `mcp/store/migrations/009_worker_runtime_sessions.sql`, `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-ATX-P0-003` | todo |
+| `ATX-P0-004` | Secure instruction protocol (no raw shell key injection path) | runtime-security | `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/transports/headless-transport.ts`, `mcp/runtime/tmux-manager.ts` | `T-ATX-P0-004` | todo |
+| `ATX-P0-005` | Persist wave telemetry for cross-process UI | scheduler-core | `mcp/store/migrations/010_team_wave_state.sql`, `mcp/runtime/scheduler.ts`, `mcp/server/team-ui-state.ts` | `T-ATX-P0-005` | todo |
+| `ATX-P0-006` | Redesign group route/idempotency semantics | collaboration-runtime | `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/entities/message.schema.json`, `mcp/schemas/contracts.ts` | `T-ATX-P0-006` | todo |
+| `ATX-P0-007` | Preserve deterministic TUI contract while adding tmux UX path | operator-experience | `scripts/team-tui.ts`, `scripts/team-ui-view.ts`, `tests/integration/v3-111.tui.integration.test.ts` | `T-ATX-P0-007` | todo |
 
 ## P1 Tickets (Stabilization)
 
-| Ticket ID | Title | Owner | Lane | Wave | Depends On | Key Files | Linked Tests | Status |
-|---|---|---|---|---|---|---|---|---|
-| `CTO-P1-009` | Approval dedupe + latest decision semantics | W-Implementer-1 + Lead | A | 1 | none | `mcp/server/policy-hooks.ts` | `tests/unit/v3-203.approvals.test.ts` | done |
-| `CTO-P1-010` | Executor requires terminal success + evidence before done | W-Implementer-1 + Lead | A | 1 | none | `mcp/runtime/executor.ts` | `tests/unit/v3-006.execution-loop.test.ts`, `tests/integration/v3-006.autonomous-loop.integration.test.ts` | done |
-| `CTO-P1-011` | team_send rollback compensation on adapter send failure | W-Implementer-2 + Lead | B | 1 | none | `mcp/server/tools/agent-lifecycle.ts`, `mcp/store/sqlite-store.ts` | `tests/unit/at006.agent-lifecycle.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts` | done |
-| `CTO-P1-012` | allow-prefix boundary-safe matching + chain blocking | W-Implementer-3 + Lead | C | 1 | none | `mcp/server/guardrails.ts` | `tests/unit/v3-106.security.test.ts`, `tests/integration/v3-106.security.integration.test.ts` | done |
+| Ticket ID | Title | Owner | Key Files | Linked Tests | Status |
+|---|---|---|---|---|---|
+| `ATX-P1-001` | DAG wave dispatch behind profile flag with fairness fallback | scheduler-core | `mcp/runtime/dag-analyzer.ts`, `mcp/runtime/scheduler.ts`, `profiles/*.team.yaml` | `T-ATX-P1-001` | todo |
+| `ATX-P1-002` | Add mention parser and `team_group_send` with active-recipient dispatch | collaboration-runtime | `mcp/server/mention-parser.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_group_send.schema.json` | `T-ATX-P1-002` | todo |
+| `ATX-P1-003` | Implement decision reports as first-class persisted records | collaboration-runtime | `mcp/store/migrations/011_agent_decision_reports.sql`, `mcp/server/decision-tracker.ts`, `mcp/server/tools/agent-lifecycle.ts` | `T-ATX-P1-003` | todo |
+| `ATX-P1-004` | Extend existing model routing contract (no duplicate router) | runtime-integration | `mcp/server/tools/agent-lifecycle.ts`, `profiles/*.team.yaml`, `mcp/schemas/contracts.ts` | `T-ATX-P1-004` | todo |
+| `ATX-P1-005` | Implement transport factory with tmux/headless fallback | runtime-core | `mcp/runtime/transport-factory.ts`, `mcp/runtime/providers/codex.ts`, `mcp/runtime/transports/*` | `T-ATX-P1-005` | todo |
+| `ATX-P1-006` | Add separate `team-tmux-ui` sidecar + operator controls | operator-experience | `scripts/team-tmux-ui.ts`, `docs/operator-console.md` | `T-ATX-P1-006` | todo |
 
 ## P2 Tickets (Future-proofing)
 
-| Ticket ID | Title | Owner | Lane | Wave | Depends On | Key Files | Linked Tests | Status |
-|---|---|---|---|---|---|---|---|---|
-| `CTO-P2-007` | Optimizer token budget capped by runtime remainder | W-Implementer-3 + Lead | C | 1 | none | `mcp/server/budget-controller.ts` | `tests/unit/v3-105.optimizer.test.ts`, `tests/integration/v3-105.optimizer.integration.test.ts` | done |
-| `CTO-P2-008` | team_task_next applies role filter before limit | W-Implementer-2 + Lead | B | 1 | `CTO-P1-011` | `mcp/store/sqlite-store.ts`, `mcp/server/tools/task-board.ts` | `tests/unit/at007.task-board.test.ts`, `tests/integration/at007.task-board.integration.test.ts` | done |
+| Ticket ID | Title | Owner | Key Files | Linked Tests | Status |
+|---|---|---|---|---|---|
+| `ATX-P2-001` | Incremental DAG caching and scheduler performance guards | scheduler-core | `mcp/runtime/scheduler.ts`, `mcp/runtime/rebalancer.ts` | `T-ATX-P2-001` | todo |
+| `ATX-P2-002` | Add pluggable backend command builder for codex/claude/opencode | runtime-integration | `mcp/runtime/model-router.ts`, `mcp/runtime/transports/tmux-transport.ts` | `T-ATX-P2-002` | todo |
+| `ATX-P2-003` | Add restart/failover chaos tests for session + transport recovery | qa-reliability | `tests/chaos/*`, `tests/integration/*` | `T-ATX-P2-003` | todo |
+| `ATX-P2-004` | Release/runbook hardening for new runtime modes and flags | release-engineering | `docs/AGENT_TEAMS_HYBRID_UX_FEATURE.md`, `docs/AGENT_TEAMS_INDUSTRY_PRACTICES.md`, `scripts/release-ready.sh` | `T-ATX-P2-004` | todo |
 
-## 9) Detailed Ticket Specs
+## 8) Detailed Ticket Specs
 
-### CTO-P1-009 Approval dedupe + latest decision semantics
-- owner: `W-Implementer-1 + Lead`
-- scope/files: `mcp/server/policy-hooks.ts`, `tests/unit/v3-203.approvals.test.ts`
+### ATX-P0-001 Runtime contract ADR
+- owner: platform-architecture
+- scope/files: `README.md`, `docs/proposals/agent-runtime-contract.md`, `docs/codex-agent-teams-ui.md`
 - acceptance criteria:
-  - duplicate approvals by same `agent_id` count once
-  - latest decision wins by parseable timestamp; fallback to last occurrence
-  - metadata includes `approval_chain_raw_count` and `approval_chain_unique_count`
+  - Runtime ownership model is explicit and non-conflicting.
+  - Default behavior remains backward-compatible and documented.
+  - New feature flags and boundaries are documented with examples.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/v3-203.approvals.test.ts`
-- status: done
+  - `T-ATX-P0-001` -> `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`
+- status: todo
 
-### CTO-P1-010 Executor terminal success validation
-- owner: `W-Implementer-1 + Lead`
-- scope/files: `mcp/runtime/executor.ts`, `tests/unit/v3-006.execution-loop.test.ts`, `tests/integration/v3-006.autonomous-loop.integration.test.ts`
+### ATX-P0-002 Transport bootstrap wiring
+- owner: runtime-core
+- scope/files: `mcp/server/index.ts`, `mcp/server/server.ts`, `mcp/server/tools/agent-lifecycle.ts`
 - acceptance criteria:
-  - non-terminal/absent poll => skipped (task stays `in_progress`)
-  - terminal failure => blocked
-  - terminal success with missing evidence => blocked
-  - only terminal success + evidence publishes artifact and marks done
+  - Server can instantiate with configured worker adapter/transport.
+  - Existing call-sites without adapter keep current behavior.
+  - Bootstrap path covered by unit/integration tests.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/v3-006.execution-loop.test.ts`
-  - `npm run test:integration:ts -- tests/integration/v3-006.autonomous-loop.integration.test.ts`
-- status: done
+  - `T-ATX-P0-002` -> `npm run test:unit:ts -- tests/unit/v4-001.transport-bootstrap.test.ts`
+  - `T-ATX-P0-002` -> `npm run test:integration:ts -- tests/integration/v4-001.transport-bootstrap.integration.test.ts`
+- status: todo
 
-### CTO-P1-011 team_send rollback compensation
-- owner: `W-Implementer-2 + Lead`
-- scope/files: `mcp/server/tools/agent-lifecycle.ts`, `mcp/store/sqlite-store.ts`, `tests/unit/at006.agent-lifecycle.test.ts`, `tests/integration/v3-003.adapter.integration.test.ts`
+### ATX-P0-003 Durable worker session state
+- owner: runtime-core
+- scope/files: `mcp/store/migrations/009_worker_runtime_sessions.sql`, `mcp/store/sqlite-store.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/store/entities.ts`
 - acceptance criteria:
-  - on sendInstruction failure after insert, rollback removes inbox then message transactionally
-  - rollback telemetry event emitted
-  - retry with same idempotency key can dispatch successfully
+  - Worker session bindings survive process restart.
+  - `team_send` and `team_pull_inbox` can resolve active worker session post-restart.
+  - Migration is backward-compatible.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/at006.agent-lifecycle.test.ts`
-  - `npm run test:integration:ts -- tests/integration/v3-003.adapter.integration.test.ts`
-- status: done
+  - `T-ATX-P0-003` -> `npm run test:unit:ts -- tests/unit/v4-002.worker-session-persistence.test.ts`
+  - `T-ATX-P0-003` -> `npm run test:integration:ts -- tests/integration/v4-002.restart-recovery.integration.test.ts`
+- status: todo
 
-### CTO-P1-012 allow-prefix boundary and chain hardening
-- owner: `W-Implementer-3 + Lead`
-- scope/files: `mcp/server/guardrails.ts`, `tests/unit/v3-106.security.test.ts`, `tests/integration/v3-106.security.integration.test.ts`
+### ATX-P0-004 Secure instruction channel
+- owner: runtime-security
+- scope/files: `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/transports/headless-transport.ts`, `mcp/runtime/tmux-manager.ts`
 - acceptance criteria:
-  - allow-prefix matches only exact/whitespace boundary
-  - chained commands in allow-prefix path are denied with explicit rule marker
-  - deny-pattern precedence unchanged
+  - No raw command concatenation with untrusted instruction text.
+  - Multiline payloads delivered reliably.
+  - Injection-oriented tests pass.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/v3-106.security.test.ts`
-  - `npm run test:integration:ts -- tests/integration/v3-106.security.integration.test.ts`
-- status: done
+  - `T-ATX-P0-004` -> `npm run test:unit:ts -- tests/unit/v4-003.transport-security.test.ts`
+  - `T-ATX-P0-004` -> `npm run test:integration:ts -- tests/integration/v4-003.transport-security.integration.test.ts`
+- status: todo
 
-### CTO-P2-007 runtime-capped optimizer budget
-- owner: `W-Implementer-3 + Lead`
-- scope/files: `mcp/server/budget-controller.ts`, `tests/unit/v3-105.optimizer.test.ts`, `tests/integration/v3-105.optimizer.integration.test.ts`
+### ATX-P0-005 Persisted wave telemetry
+- owner: scheduler-core
+- scope/files: `mcp/store/migrations/010_team_wave_state.sql`, `mcp/runtime/scheduler.ts`, `mcp/server/team-ui-state.ts`
 - acceptance criteria:
-  - `constraints.token_budget` equals min(soft limit, runtime budget)
-  - cost SLO decisions reflect runtime-capped budget
+  - `team_ui_state` returns wave metrics consistently across process boundaries.
+  - Wave progress values are consistent with task completion.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/v3-105.optimizer.test.ts`
-  - `npm run test:integration:ts -- tests/integration/v3-105.optimizer.integration.test.ts`
-- status: done
+  - `T-ATX-P0-005` -> `npm run test:unit:ts -- tests/unit/v4-004.wave-telemetry.test.ts`
+  - `T-ATX-P0-005` -> `npm run test:integration:ts -- tests/integration/v4-004.wave-telemetry.integration.test.ts`
+- status: todo
 
-### CTO-P2-008 role-aware ready queue before limit
-- owner: `W-Implementer-2 + Lead`
-- scope/files: `mcp/store/sqlite-store.ts`, `mcp/server/tools/task-board.ts`, `tests/unit/at007.task-board.test.ts`, `tests/integration/at007.task-board.integration.test.ts`
+### ATX-P0-006 Group route/idempotency redesign
+- owner: collaboration-runtime
+- scope/files: `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/schemas/entities/message.schema.json`, `mcp/schemas/contracts.ts`
 - acceptance criteria:
-  - role-aware query applies role predicate before LIMIT
-  - `team_task_next(for_agent_id, limit)` returns role-matching tasks even when global first page is other roles
+  - Distinct recipient sets produce distinct route/idempotency scopes.
+  - Duplicate suppression works within identical recipient set only.
+  - Direct/broadcast semantics remain unchanged.
 - linked tests:
-  - `npm run test:unit:ts -- tests/unit/at007.task-board.test.ts`
-  - `npm run test:integration:ts -- tests/integration/at007.task-board.integration.test.ts`
-- status: done
+  - `T-ATX-P0-006` -> `npm run test:unit:ts -- tests/unit/v4-005.group-idempotency.test.ts`
+  - `T-ATX-P0-006` -> `npm run test:integration:ts -- tests/integration/v4-005.group-idempotency.integration.test.ts`
+- status: todo
+
+### ATX-P0-007 Deterministic TUI compatibility
+- owner: operator-experience
+- scope/files: `scripts/team-tui.ts`, `scripts/team-ui-view.ts`, `tests/integration/v3-111.tui.integration.test.ts`, `tests/unit/v3-111.team-card.test.ts`
+- acceptance criteria:
+  - Existing deterministic output markers remain unchanged.
+  - New runtime features do not break existing one-shot workflows.
+- linked tests:
+  - `T-ATX-P0-007` -> `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`
+  - `T-ATX-P0-007` -> `npm run test:unit:ts -- tests/unit/v3-111.team-card.test.ts`
+- status: todo
+
+### ATX-P1-001 Flagged DAG wave dispatch
+- owner: scheduler-core
+- scope/files: `mcp/runtime/dag-analyzer.ts`, `mcp/runtime/scheduler.ts`, `profiles/*.team.yaml`
+- acceptance criteria:
+  - Wave dispatch can be enabled/disabled by policy.
+  - Cycle detection falls back safely.
+  - Fairness/starvation baseline tests remain green.
+- linked tests:
+  - `T-ATX-P1-001` -> `npm run test:unit:ts -- tests/unit/v4-006.dag-wave-dispatch.test.ts tests/unit/v3-002.scheduler.test.ts`
+  - `T-ATX-P1-001` -> `npm run test:integration:ts -- tests/integration/v4-006.dag-wave-dispatch.integration.test.ts`
+- status: todo
+
+### ATX-P1-002 Mention parser + team_group_send
+- owner: collaboration-runtime
+- scope/files: `mcp/server/mention-parser.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_group_send.schema.json`
+- acceptance criteria:
+  - Supports `@agent`, `@role`, `@all` with deterministic dedupe.
+  - Group send creates correct inbox entries and immediate dispatch for active recipients.
+- linked tests:
+  - `T-ATX-P1-002` -> `npm run test:unit:ts -- tests/unit/v4-007.mention-parser.test.ts tests/unit/v4-008.team-group-send.test.ts`
+  - `T-ATX-P1-002` -> `npm run test:integration:ts -- tests/integration/v4-007.group-send.integration.test.ts`
+- status: todo
+
+### ATX-P1-003 Persisted decision reports
+- owner: collaboration-runtime
+- scope/files: `mcp/store/migrations/011_agent_decision_reports.sql`, `mcp/store/sqlite-store.ts`, `mcp/server/decision-tracker.ts`, `mcp/server/tools/agent-lifecycle.ts`, `scripts/team-card.ts`
+- acceptance criteria:
+  - Reports are stored per `team_id + agent_id + task_id + revision`.
+  - UI/card surfaces can show latest and history without overwrites.
+- linked tests:
+  - `T-ATX-P1-003` -> `npm run test:unit:ts -- tests/unit/v4-009.decision-reports.test.ts`
+  - `T-ATX-P1-003` -> `npm run test:integration:ts -- tests/integration/v4-008.decision-reports.integration.test.ts`
+- status: todo
+
+### ATX-P1-004 Model routing extension
+- owner: runtime-integration
+- scope/files: `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/staffing-planner.ts`, `profiles/*.team.yaml`, `mcp/schemas/contracts.ts`
+- acceptance criteria:
+  - Existing `model_routing` keys remain supported.
+  - Backend selection extension is additive and backward-compatible.
+- linked tests:
+  - `T-ATX-P1-004` -> `npm run test:unit:ts -- tests/unit/v4-010.model-routing-compat.test.ts tests/unit/v3-109.staffing-planner.test.ts`
+  - `T-ATX-P1-004` -> `npm run test:integration:ts -- tests/integration/v4-009.model-routing-compat.integration.test.ts`
+- status: todo
+
+### ATX-P1-005 Transport factory + fallback
+- owner: runtime-core
+- scope/files: `mcp/runtime/transport-factory.ts`, `mcp/runtime/providers/codex.ts`, `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/transports/headless-transport.ts`
+- acceptance criteria:
+  - Auto-select transport based on env and feature flags.
+  - Headless fallback is deterministic in CI and non-TTY.
+- linked tests:
+  - `T-ATX-P1-005` -> `npm run test:unit:ts -- tests/unit/v4-011.transport-factory.test.ts tests/unit/v4-012.headless-transport.test.ts`
+  - `T-ATX-P1-005` -> `npm run test:integration:ts -- tests/integration/v4-010.transport-fallback.integration.test.ts`
+- status: todo
+
+### ATX-P1-006 Separate tmux sidecar UI
+- owner: operator-experience
+- scope/files: `scripts/team-tmux-ui.ts`, `docs/operator-console.md`, `package.json`
+- acceptance criteria:
+  - Live tmux UX exists as separate command path.
+  - Existing `team:tui` output contract unchanged.
+- linked tests:
+  - `T-ATX-P1-006` -> `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts tests/integration/v4-011.team-tmux-ui.integration.test.ts`
+- status: todo
+
+### ATX-P2-001 DAG performance hardening
+- owner: scheduler-core
+- scope/files: `mcp/runtime/scheduler.ts`, `mcp/runtime/rebalancer.ts`
+- acceptance criteria:
+  - Avoid full DAG recomputation each tick when graph unchanged.
+  - Add perf guard metrics and thresholds.
+- linked tests:
+  - `T-ATX-P2-001` -> `npm run test:unit:ts -- tests/unit/v4-013.scheduler-dag-perf.test.ts`
+- status: todo
+
+### ATX-P2-002 Pluggable backend command builder
+- owner: runtime-integration
+- scope/files: `mcp/runtime/model-router.ts`, `mcp/runtime/transports/tmux-transport.ts`
+- acceptance criteria:
+  - Backend command construction is provider-pluggable.
+  - Unsupported backend states fail closed with actionable error.
+- linked tests:
+  - `T-ATX-P2-002` -> `npm run test:unit:ts -- tests/unit/v4-014.backend-command-builder.test.ts`
+- status: todo
+
+### ATX-P2-003 Chaos/restart/failover suite
+- owner: qa-reliability
+- scope/files: `tests/chaos/v4-001.runtime-recovery.chaos.test.ts`, `tests/integration/v4-012.runtime-recovery.integration.test.ts`
+- acceptance criteria:
+  - Worker restart recovery validated under crash/restart conditions.
+  - No orphaned runtime session entries after cleanup.
+- linked tests:
+  - `T-ATX-P2-003` -> `npm run test:integration:ts -- tests/integration/v4-012.runtime-recovery.integration.test.ts`
+  - `T-ATX-P2-003` -> `node --import tsx --test tests/chaos/v4-001.runtime-recovery.chaos.test.ts`
+- status: todo
+
+### ATX-P2-004 Docs and release-gate hardening
+- owner: release-engineering
+- scope/files: `docs/AGENT_TEAMS_HYBRID_UX_FEATURE.md`, `docs/AGENT_TEAMS_INDUSTRY_PRACTICES.md`, `scripts/release-ready.sh`
+- acceptance criteria:
+  - Runbooks include feature flags, migration steps, fallback behavior, and rollback procedures.
+  - Release gate checks new migrations and deterministic contract tests.
+- linked tests:
+  - `T-ATX-P2-004` -> `npm run verify`
+- status: todo
+
+## 9) Ticket-to-Test Matrix
+
+| Test ID | Type | Covers Ticket(s) | Description |
+|---|---|---|---|
+| `T-ATX-P0-001` | Integration | `ATX-P0-001` | Contract/doc alignment with existing deterministic UI behavior |
+| `T-ATX-P0-002` | Unit+Integration | `ATX-P0-002` | Bootstrap wiring and default compatibility |
+| `T-ATX-P0-003` | Unit+Integration | `ATX-P0-003` | Worker session persistence + restart recovery |
+| `T-ATX-P0-004` | Unit+Integration | `ATX-P0-004` | Instruction-channel security and multiline robustness |
+| `T-ATX-P0-005` | Unit+Integration | `ATX-P0-005` | Cross-process wave telemetry correctness |
+| `T-ATX-P0-006` | Unit+Integration | `ATX-P0-006` | Group message route/idempotency collision prevention |
+| `T-ATX-P0-007` | Integration | `ATX-P0-007` | Deterministic `team-tui`/`team-card` compatibility |
+| `T-ATX-P1-001` | Unit+Integration | `ATX-P1-001` | Flagged DAG dispatch + fairness fallback |
+| `T-ATX-P1-002` | Unit+Integration | `ATX-P1-002` | Mention parsing and group send routing |
+| `T-ATX-P1-003` | Unit+Integration | `ATX-P1-003` | Decision report persistence + rendering |
+| `T-ATX-P1-004` | Unit+Integration | `ATX-P1-004` | Model routing backward compatibility |
+| `T-ATX-P1-005` | Unit+Integration | `ATX-P1-005` | Transport factory selection and fallback |
+| `T-ATX-P1-006` | Integration | `ATX-P1-006` | New tmux sidecar without `team-tui` regressions |
+| `T-ATX-P2-001` | Unit | `ATX-P2-001` | DAG recompute performance limits |
+| `T-ATX-P2-002` | Unit | `ATX-P2-002` | Backend command builder correctness |
+| `T-ATX-P2-003` | Chaos+Integration | `ATX-P2-003` | Crash/restart/failover reliability |
+| `T-ATX-P2-004` | Release Gate | `ATX-P2-004` | Docs and release readiness enforcement |
+
+## 10) Completion Math (Required)
+
+- `overall_completion_pct = done_tickets / total_tickets * 100`
+- `p0_completion_pct = done_p0 / total_p0 * 100`
+- `p1_completion_pct = done_p1 / total_p1 * 100`
+- `p2_completion_pct = done_p2 / total_p2 * 100`
+
+Always report both counts and percentages.
+
+## 11) Anti-Recurrence Controls
+
+1. No runtime state that affects dispatch/delivery may remain memory-only without explicit durability rationale.
+2. Any new delivery mode must define route-key + idempotency semantics and collision tests.
+3. Any scheduling enhancement must preserve fairness tests and have a feature-flag fallback.
+4. Deterministic CLI contract (`v3-111`) is a release-blocking gate.
+5. Any ticket status `done` without linked test evidence and git evidence is invalid and must revert to `blocked` or `in_progress`.
