@@ -53,6 +53,9 @@ interface SpawnModelResolution {
   model_source: string;
   model_routing_applied: boolean;
   inherited_model: boolean;
+  backend: string | null;
+  backend_source: string;
+  backend_routing_applied: boolean;
 }
 
 interface DuplicateResponse extends ToolResult {
@@ -207,30 +210,59 @@ function pickString(value: unknown): string | null {
 
 function resolveSpawnModel({
   inputModel,
+  inputBackend,
   team,
   role,
   policy
 }: {
   inputModel: unknown;
+  inputBackend: unknown;
   team: TeamRecord;
   role: string;
   policy: Record<string, unknown>;
 }): SpawnModelResolution {
   const explicit = pickString(inputModel);
-  if (explicit) {
-    return {
-      model: explicit,
-      model_source: 'explicit_input',
-      model_routing_applied: false,
-      inherited_model: false
-    };
-  }
+  const explicitBackend = pickString(inputBackend);
 
   const modelRouting = (
     policy.model_routing && typeof policy.model_routing === 'object'
       ? policy.model_routing as Record<string, unknown>
       : {}
   );
+
+  const roleBackends = (
+    modelRouting.role_backends && typeof modelRouting.role_backends === 'object'
+      ? modelRouting.role_backends as Record<string, unknown>
+      : {}
+  );
+  const roleBackend = pickString(roleBackends[role]);
+  const defaultBackend = pickString(modelRouting.default_backend);
+  const routedBackend = modelRouting.enabled === true
+    ? (roleBackend ?? defaultBackend)
+    : null;
+  const teamBackendFallback = (
+    team.metadata && typeof team.metadata === 'object'
+      ? pickString((team.metadata as Record<string, unknown>).model_routing_default_backend)
+      : null
+  );
+  const backend = explicitBackend ?? routedBackend ?? teamBackendFallback ?? null;
+  const backendSource = explicitBackend
+    ? 'explicit_input'
+    : (roleBackend ? 'policy_role_backend' : (defaultBackend ? 'policy_default_backend' : (teamBackendFallback ? 'team_default_backend' : 'none')));
+  const backendRoutingApplied = modelRouting.enabled === true && !explicitBackend && Boolean(routedBackend);
+
+  if (explicit) {
+    return {
+      model: explicit,
+      model_source: 'explicit_input',
+      model_routing_applied: false,
+      inherited_model: false,
+      backend,
+      backend_source: backendSource,
+      backend_routing_applied: backendRoutingApplied
+    };
+  }
+
   if (modelRouting.enabled === true) {
     const roleModels = (
       modelRouting.role_models && typeof modelRouting.role_models === 'object'
@@ -245,7 +277,10 @@ function resolveSpawnModel({
         model: routedModel,
         model_source: roleModel ? 'policy_role_route' : 'policy_default_route',
         model_routing_applied: true,
-        inherited_model: false
+        inherited_model: false,
+        backend,
+        backend_source: backendSource,
+        backend_routing_applied: backendRoutingApplied
       };
     }
   }
@@ -254,7 +289,10 @@ function resolveSpawnModel({
     model: team.session_model ?? null,
     model_source: 'session_inherited',
     model_routing_applied: false,
-    inherited_model: true
+    inherited_model: true,
+    backend,
+    backend_source: backendSource,
+    backend_routing_applied: backendRoutingApplied
   };
 }
 
@@ -458,6 +496,7 @@ export function registerAgentLifecycleTools(
     const ts = nowIso();
     const modelAssignment = resolveSpawnModel({
       inputModel: input.model,
+      inputBackend: input.backend,
       team,
       role,
       policy
@@ -476,7 +515,9 @@ export function registerAgentLifecycleTools(
         metadata: {
           team_id: teamId,
           role,
-          permission_profile: permissionProfile
+          permission_profile: permissionProfile,
+          backend: modelAssignment.backend,
+          backend_source: modelAssignment.backend_source
         }
       });
       if (!workerSpawn.ok) {
@@ -500,6 +541,9 @@ export function registerAgentLifecycleTools(
         inherited_model: modelAssignment.inherited_model,
         model_source: modelAssignment.model_source,
         model_routing_applied: modelAssignment.model_routing_applied,
+        backend: modelAssignment.backend,
+        backend_source: modelAssignment.backend_source,
+        backend_routing_applied: modelAssignment.backend_routing_applied,
         permission_profile: permissionProfile
       }
     });
@@ -524,7 +568,9 @@ export function registerAgentLifecycleTools(
         metadata: {
           role,
           model: modelAssignment.model,
-          model_source: modelAssignment.model_source
+          model_source: modelAssignment.model_source,
+          backend: modelAssignment.backend,
+          backend_source: modelAssignment.backend_source
         },
         created_at: ts,
         updated_at: ts,
@@ -536,6 +582,14 @@ export function registerAgentLifecycleTools(
       ok: true,
       agent,
       worker_session: workerSession,
+      routing: {
+        model: modelAssignment.model,
+        model_source: modelAssignment.model_source,
+        model_routing_applied: modelAssignment.model_routing_applied,
+        backend: modelAssignment.backend,
+        backend_source: modelAssignment.backend_source,
+        backend_routing_applied: modelAssignment.backend_routing_applied
+      },
       runtime_mode: server.runtimeMode ?? 'host_orchestrated_default',
       managed_runtime_enabled: server.managedRuntimeEnabled ?? false
     };
@@ -1115,7 +1169,7 @@ export function registerAgentLifecycleTools(
           });
           workerErrors.push({
             agent_id: recipientAgentId,
-            worker_error: delivery.error
+            worker_error: { ...delivery.error }
           });
           continue;
         }

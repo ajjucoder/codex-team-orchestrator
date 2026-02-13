@@ -74,6 +74,10 @@ scheduler:
 model_routing:
   enabled: false
   mode: inherit_session_model
+  default_backend: codex
+  role_backends:
+    reviewer: claude
+    researcher: claude
 permissions:
   profiles:
     unrestricted:

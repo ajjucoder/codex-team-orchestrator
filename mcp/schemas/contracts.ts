@@ -180,7 +180,7 @@ export interface ToolInputContracts {
     preferred_threads?: number;
   };
   'team_send.schema.json': { team_id: string; from_agent_id: string; to_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
-  'team_spawn.schema.json': { team_id: string; role: string; model?: string };
+  'team_spawn.schema.json': { team_id: string; role: string; model?: string; backend?: string };
   'team_spawn_ready_roles.schema.json': { team_id: string; max_new_agents?: number };
   'team_start.schema.json': { objective: string; profile?: string; max_threads?: number; session_model?: string; parent_team_id?: string };
   'team_status.schema.json': { team_id: string };

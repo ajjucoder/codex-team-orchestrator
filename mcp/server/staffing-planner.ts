@@ -42,6 +42,10 @@ export interface StaffingPlan {
     signal_boost: number;
     bounded_max: number;
   };
+  model_routing: {
+    default_backend: string;
+    role_backends: Record<string, string>;
+  };
   reasons: string[];
 }
 
@@ -375,6 +379,22 @@ function fallbackSpecialist(role: string, domain: StaffingDomain, templateId: st
   };
 }
 
+function defaultBackendForDomain(domain: StaffingDomain): string {
+  if (domain === 'frontend') return 'opencode';
+  if (domain === 'security') return 'claude';
+  return 'codex';
+}
+
+function backendForRole(role: string, domain: StaffingDomain, defaultBackend: string): string {
+  if (role === 'reviewer' || role === 'researcher') {
+    return domain === 'frontend' ? 'opencode' : 'claude';
+  }
+  if (domain === 'frontend' && role === 'implementer') {
+    return 'opencode';
+  }
+  return defaultBackend;
+}
+
 export function buildStaffingPlan(input: StaffingPlanInput): StaffingPlan {
   const boundedMax = toThreadBound(input.max_threads);
   const baseThreads = clamp(baseThreadsForTaskSize(input.task_size), 1, boundedMax);
@@ -415,6 +435,13 @@ export function buildStaffingPlan(input: StaffingPlanInput): StaffingPlan {
       priority: index + 1
     } satisfies SpecialistMetadata;
   });
+  const defaultBackend = defaultBackendForDomain(picked.template.domain);
+  const roleBackends: Record<string, string> = {};
+  for (const role of plannedRoles) {
+    if (!roleBackends[role]) {
+      roleBackends[role] = backendForRole(role, picked.template.domain, defaultBackend);
+    }
+  }
 
   const reasons = [`domain template selected: ${picked.template.domain}`];
   if (picked.score > 0) {
@@ -426,6 +453,7 @@ export function buildStaffingPlan(input: StaffingPlanInput): StaffingPlan {
   if (Number.isFinite(preferredThreads)) {
     reasons.push('preferred thread count enforced');
   }
+  reasons.push(`routing backend default: ${defaultBackend}`);
 
   return {
     template_id: picked.template.template_id,
@@ -439,6 +467,10 @@ export function buildStaffingPlan(input: StaffingPlanInput): StaffingPlan {
       estimated_parallel_tasks: estimatedParallelTasks,
       signal_boost: signalBoost,
       bounded_max: boundedMax
+    },
+    model_routing: {
+      default_backend: defaultBackend,
+      role_backends: roleBackends
     },
     reasons
   };
