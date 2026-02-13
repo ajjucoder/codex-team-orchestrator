@@ -63,6 +63,19 @@ test('V4-003 unit: tmux manager writes framed payload via file-buffer path (no r
   assert.equal(allArgs.some((arg) => arg.includes('/tmp/pwned')), false);
 });
 
+test('V4-003 unit: tmux manager preserves pane target format for interrupts', () => {
+  const calls: string[][] = [];
+  const manager = new TmuxManager({
+    runner: (args) => {
+      calls.push(args);
+      return '';
+    }
+  });
+
+  manager.interruptSession('team_x:0.0');
+  assert.deepEqual(calls[0], ['send-keys', '-t', 'team_x:0.0', 'C-c']);
+});
+
 test('V4-003 unit: tmux transport delegates framed send through manager with injection-safe args', () => {
   const calls: string[][] = [];
   const manager = new TmuxManager({

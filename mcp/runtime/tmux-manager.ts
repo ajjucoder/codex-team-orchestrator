@@ -39,6 +39,11 @@ function sanitizeToken(value: string, fallback: string): string {
   return token.length > 0 ? token : fallback;
 }
 
+function normalizePaneTarget(value: string, fallback: string): string {
+  const target = value.trim();
+  return target.length > 0 ? target : fallback;
+}
+
 function hashToken(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
@@ -96,7 +101,7 @@ export class TmuxManager {
   }
 
   interruptSession(target: string): void {
-    const normalizedTarget = sanitizeToken(target, 'atx_session:0.0');
+    const normalizedTarget = normalizePaneTarget(target, 'atx_session:0.0');
     this.runner(['send-keys', '-t', normalizedTarget, 'C-c']);
   }
 
