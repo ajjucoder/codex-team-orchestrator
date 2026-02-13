@@ -8,10 +8,10 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `13/17 (76.5%)`
+- `Overall`: `14/17 (82.4%)`
 - `P0`: `7/7 (100.0%)`
 - `P1`: `6/6 (100.0%)`
-- `P2`: `0/4 (0.0%)`
+- `P2`: `1/4 (25.0%)`
 
 Formula:
 - `overall_completion_pct = done_tickets / total_tickets * 100`
@@ -48,8 +48,8 @@ Formula:
 | `ATX-P1-004` | P1 | done | `mcp/schemas/contracts.ts`, `mcp/schemas/tools/team_spawn.schema.json`, `mcp/server/staffing-planner.ts`, `mcp/server/tools/agent-lifecycle.ts`, `profiles/default.team.yaml`, `profiles/fast.team.yaml`, `profiles/deep.team.yaml`, `tests/unit/v4-010.model-routing-compat.test.ts`, `tests/integration/v4-009.model-routing-compat.integration.test.ts` | `T-ATX-P1-004` | pass (`npm run test:unit:ts -- tests/unit/v4-010.model-routing-compat.test.ts tests/unit/v3-109.staffing-planner.test.ts`; `npm run test:integration:ts -- tests/integration/v4-009.model-routing-compat.integration.test.ts`) | `1cdc0d6b7b8531536d078519984fb37dbabc592f` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-005` | P1 | done | `mcp/runtime/transport-factory.ts`, `mcp/server/index.ts`, `tests/unit/v4-011.transport-factory.test.ts`, `tests/unit/v4-012.headless-transport.test.ts`, `tests/integration/v4-010.transport-fallback.integration.test.ts` | `T-ATX-P1-005` | pass (`npm run test:unit:ts -- tests/unit/v4-011.transport-factory.test.ts tests/unit/v4-012.headless-transport.test.ts`; `npm run test:integration:ts -- tests/integration/v4-010.transport-fallback.integration.test.ts`) | `54ca1787bd97f3d77585878e1850ac9e19b4b6d0` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-006` | P1 | done | `scripts/team-tmux-ui.ts`, `tests/integration/v4-011.team-tmux-ui.integration.test.ts`, `docs/operator-console.md`, `package.json` | `T-ATX-P1-006` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts tests/integration/v4-011.team-tmux-ui.integration.test.ts`) | `9fc15f69277b1b4c7e129891df3bcdd1bfaf368b` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P2-001` | P2 | in_progress | pending | `T-ATX-P2-001` | pending | pending | pending | pending |
-| `ATX-P2-002` | P2 | todo | pending | `T-ATX-P2-002` | pending | pending | pending | pending |
+| `ATX-P2-001` | P2 | done | `mcp/runtime/scheduler.ts`, `tests/unit/v4-013.scheduler-dag-perf.test.ts` | `T-ATX-P2-001` | pass (`npm run test:unit:ts -- tests/unit/v4-013.scheduler-dag-perf.test.ts`) | `8be2c80a4e68d06bed0f4a39bdb47764c12af35c` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P2-002` | P2 | in_progress | pending | `T-ATX-P2-002` | pending | pending | pending | pending |
 | `ATX-P2-003` | P2 | todo | pending | `T-ATX-P2-003` | pending | pending | pending | pending |
 | `ATX-P2-004` | P2 | todo | pending | `T-ATX-P2-004` | pending | pending | pending | pending |
 
@@ -87,6 +87,7 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:unit:ts -- tests/unit/v4-011.transport-factory.test.ts tests/unit/v4-012.headless-transport.test.ts` -> pass (ticket `ATX-P1-005`)
 - `npm run test:integration:ts -- tests/integration/v4-010.transport-fallback.integration.test.ts` -> pass (ticket `ATX-P1-005`)
 - `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts tests/integration/v4-011.team-tmux-ui.integration.test.ts` -> pass (ticket `ATX-P1-006`)
+- `npm run test:unit:ts -- tests/unit/v4-013.scheduler-dag-perf.test.ts` -> pass (ticket `ATX-P2-001`)
 
 ## Blockers
 
@@ -94,6 +95,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P2-001` DAG performance hardening.
-2. Execute `ATX-P2-002` pluggable backend command builder.
+1. Execute `ATX-P2-002` pluggable backend command builder.
+2. Execute `ATX-P2-003` resilience chaos + integration coverage.
 3. Run linked tests per ticket and update this tracker after each status transition.
