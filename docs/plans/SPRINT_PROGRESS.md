@@ -8,9 +8,9 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `9/17 (52.9%)`
+- `Overall`: `10/17 (58.8%)`
 - `P0`: `7/7 (100.0%)`
-- `P1`: `2/6 (33.3%)`
+- `P1`: `3/6 (50.0%)`
 - `P2`: `0/4 (0.0%)`
 
 Formula:
@@ -44,8 +44,8 @@ Formula:
 | `ATX-P0-007` | P0 | done | `scripts/team-tui.ts`, `scripts/team-ui-view.ts`, `tests/integration/v3-111.tui.integration.test.ts`, `tests/unit/v3-111.team-card.test.ts` | `T-ATX-P0-007` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts`; `npm run test:unit:ts -- tests/unit/v3-111.team-card.test.ts`) | `fd2eb6bd038ec76da9144cb0ca9f73fd76ce555d` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-001` | P1 | done | `mcp/runtime/dag-analyzer.ts`, `mcp/runtime/scheduler.ts`, `mcp/server/index.ts`, `profiles/default.team.yaml`, `profiles/fast.team.yaml`, `profiles/deep.team.yaml`, `tests/unit/v4-006.dag-wave-dispatch.test.ts`, `tests/integration/v4-006.dag-wave-dispatch.integration.test.ts` | `T-ATX-P1-001` | pass (`npm run test:unit:ts -- tests/unit/v4-006.dag-wave-dispatch.test.ts tests/unit/v3-002.scheduler.test.ts`; `npm run test:integration:ts -- tests/integration/v4-006.dag-wave-dispatch.integration.test.ts`) | `bdbf92e8dbe798cd2e22f7605a5054ad913938bf` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-002` | P1 | done | `mcp/server/mention-parser.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_group_send.schema.json`, `mcp/schemas/contracts.ts`, `tests/unit/v4-007.mention-parser.test.ts`, `tests/unit/v4-008.team-group-send.test.ts`, `tests/integration/v4-007.group-send.integration.test.ts` | `T-ATX-P1-002` | pass (`npm run test:unit:ts -- tests/unit/v4-007.mention-parser.test.ts tests/unit/v4-008.team-group-send.test.ts`; `npm run test:integration:ts -- tests/integration/v4-007.group-send.integration.test.ts`) | `da9c4a1ccbab5492d1bee35118cdd5e976ee10d9` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P1-003` | P1 | in_progress | pending | `T-ATX-P1-003` | pending | pending | pending | pending |
-| `ATX-P1-004` | P1 | todo | pending | `T-ATX-P1-004` | pending | pending | pending | pending |
+| `ATX-P1-003` | P1 | done | `mcp/store/migrations/011_agent_decision_reports.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/server/decision-tracker.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_agent_report.schema.json`, `mcp/schemas/contracts.ts`, `scripts/team-card.ts`, `tests/unit/v4-009.decision-reports.test.ts`, `tests/integration/v4-008.decision-reports.integration.test.ts` | `T-ATX-P1-003` | pass (`npm run test:unit:ts -- tests/unit/v4-009.decision-reports.test.ts`; `npm run test:integration:ts -- tests/integration/v4-008.decision-reports.integration.test.ts`) | `3884ec48d2d7e2b3b59f26596be104fbab30c250` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P1-004` | P1 | in_progress | pending | `T-ATX-P1-004` | pending | pending | pending | pending |
 | `ATX-P1-005` | P1 | todo | pending | `T-ATX-P1-005` | pending | pending | pending | pending |
 | `ATX-P1-006` | P1 | todo | pending | `T-ATX-P1-006` | pending | pending | pending | pending |
 | `ATX-P2-001` | P2 | todo | pending | `T-ATX-P2-001` | pending | pending | pending | pending |
@@ -80,6 +80,8 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v4-006.dag-wave-dispatch.integration.test.ts` -> pass (ticket `ATX-P1-001`)
 - `npm run test:unit:ts -- tests/unit/v4-007.mention-parser.test.ts tests/unit/v4-008.team-group-send.test.ts` -> pass (ticket `ATX-P1-002`)
 - `npm run test:integration:ts -- tests/integration/v4-007.group-send.integration.test.ts` -> pass (ticket `ATX-P1-002`)
+- `npm run test:unit:ts -- tests/unit/v4-009.decision-reports.test.ts` -> pass (ticket `ATX-P1-003`)
+- `npm run test:integration:ts -- tests/integration/v4-008.decision-reports.integration.test.ts` -> pass (ticket `ATX-P1-003`)
 
 ## Blockers
 
@@ -87,6 +89,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P1-003` persisted decision reports and revision history.
-2. Execute `ATX-P1-004` model routing contract extension.
+1. Execute `ATX-P1-004` model routing contract extension.
+2. Execute `ATX-P1-005` transport factory + fallback.
 3. Run linked tests per ticket and update this tracker after each status transition.
