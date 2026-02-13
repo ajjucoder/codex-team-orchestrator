@@ -70,6 +70,15 @@ Notes:
 - Release catalog:
   - `docs/RELEASE_CATALOG_AGENT_TEAMS_HYBRID_UI.md`
 
+## ATX Runtime Documentation
+
+- Architecture and contracts:
+  - `docs/ATX_RUNTIME_ARCHITECTURE.md`
+- Operations runbook:
+  - `docs/ATX_OPERATIONS_RUNBOOK.md`
+- Release readiness and merge gates:
+  - `docs/ATX_RELEASE_READINESS.md`
+
 ## Quick Start
 
 ```bash

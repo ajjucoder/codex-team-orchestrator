@@ -108,3 +108,36 @@ A ticket may be marked `done` only if all are present:
 
 1. Monitor PR CI for the latest push and merge into `main` after green checks.
 2. Optionally cut release artifacts using `scripts/release-ready.sh` after merge.
+
+## Post-Merge Cleanup + Documentation Session (2026-02-13)
+
+Session metadata:
+
+- Branch: `main`
+- Execution Mode: single-agent
+- Objective: finalize cleanup and publish production-grade ATX documentation pack.
+
+Completed actions:
+
+1. Merged `feature/atx-agent-teams-e2e` into `main` and pushed (`db325a7`).
+2. Verified `main` via `npm run verify` (pass).
+3. Verified GitHub CI on `main` run `21979238161` (pass).
+4. Added ATX architecture/runbook/readiness documentation:
+   - `docs/ATX_RUNTIME_ARCHITECTURE.md`
+   - `docs/ATX_OPERATIONS_RUNBOOK.md`
+   - `docs/ATX_RELEASE_READINESS.md`
+5. Updated docs index/checklist links:
+   - `README.md`
+   - `docs/release-checklist.md`
+
+Branch cleanup:
+
+- deleted local branch: `feature/atx-agent-teams-e2e`
+- deleted remote branch: `origin/feature/atx-agent-teams-e2e`
+
+Completion snapshot remains:
+
+- `Overall`: `17/17 (100.0%)`
+- `P0`: `7/7 (100.0%)`
+- `P1`: `6/6 (100.0%)`
+- `P2`: `4/4 (100.0%)`
