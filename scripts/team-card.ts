@@ -2,6 +2,7 @@
 
 import process from 'node:process';
 import { createServer } from '../mcp/server/index.js';
+import type { AgentDecisionReportRecord } from '../mcp/store/entities.js';
 import {
   formatIsoTime,
   loadTeamUiSnapshot,
@@ -157,6 +158,43 @@ function renderFailures(items: TeamSnapshotFailureHighlight[], emptyMessage: str
     .join('\n');
 }
 
+function compareDecisionReports(left: AgentDecisionReportRecord, right: AgentDecisionReportRecord): number {
+  const createdDiff = Date.parse(right.created_at) - Date.parse(left.created_at);
+  if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+  if (left.revision !== right.revision) return right.revision - left.revision;
+  const taskDiff = left.task_id.localeCompare(right.task_id);
+  if (taskDiff !== 0) return taskDiff;
+  const agentDiff = left.agent_id.localeCompare(right.agent_id);
+  if (agentDiff !== 0) return agentDiff;
+  return right.report_id.localeCompare(left.report_id);
+}
+
+function latestDecisionReports(reports: AgentDecisionReportRecord[], limit = 8): AgentDecisionReportRecord[] {
+  const latestByScope = new Map<string, AgentDecisionReportRecord>();
+  for (const report of [...reports].sort(compareDecisionReports)) {
+    const scopeKey = `${report.agent_id}:${report.task_id}`;
+    if (!latestByScope.has(scopeKey)) {
+      latestByScope.set(scopeKey, report);
+    }
+  }
+  return [...latestByScope.values()]
+    .sort(compareDecisionReports)
+    .slice(0, limit);
+}
+
+function renderDecisionReports(reports: AgentDecisionReportRecord[], emptyMessage: string): string {
+  if (reports.length === 0) {
+    return `- ${emptyMessage}`;
+  }
+
+  return reports
+    .map((report) => {
+      const confidence = report.confidence === null ? 'n/a' : report.confidence.toFixed(2);
+      return `- ${formatIsoTime(report.created_at)} agent=${renderShortId(report.agent_id)} task=${renderShortId(report.task_id)} rev=${report.revision} decision=${report.decision} confidence=${confidence} - ${report.summary}`;
+    })
+    .join('\n');
+}
+
 function renderRecentFeed(items: TeamSnapshotFeedItem[]): string {
   if (items.length === 0) {
     return '- (no recent events)';
@@ -229,7 +267,9 @@ function renderLaunchCard(snapshot: TeamUiSnapshot): string {
   ].join('\n');
 }
 
-function renderProgressCard(snapshot: TeamUiSnapshot): string {
+function renderProgressCard(snapshot: TeamUiSnapshot, decisionReports: AgentDecisionReportRecord[]): string {
+  const latestReports = latestDecisionReports(decisionReports, 8);
+  const historyReports = [...decisionReports].sort(compareDecisionReports).slice(0, 12);
   return [
     ...renderHeader('progress', snapshot),
     ...renderCounters(snapshot),
@@ -249,7 +289,13 @@ function renderProgressCard(snapshot: TeamUiSnapshot): string {
     renderEvidence(snapshot.evidence_links.slice(0, 8), '(no evidence yet)'),
     '',
     '## Failure Highlights',
-    renderFailures(snapshot.failure_highlights.slice(0, 8), '(no failure signals)')
+    renderFailures(snapshot.failure_highlights.slice(0, 8), '(no failure signals)'),
+    '',
+    '## Decision Reports (Latest)',
+    renderDecisionReports(latestReports, '(no decision reports)'),
+    '',
+    '## Decision Report History',
+    renderDecisionReports(historyReports, '(no decision report history)')
   ].join('\n');
 }
 
@@ -275,7 +321,9 @@ function renderTimeoutCard(snapshot: TeamUiSnapshot): string {
   ].join('\n');
 }
 
-function renderCompleteCard(snapshot: TeamUiSnapshot): string {
+function renderCompleteCard(snapshot: TeamUiSnapshot, decisionReports: AgentDecisionReportRecord[]): string {
+  const latestReports = latestDecisionReports(decisionReports, 10);
+  const historyReports = [...decisionReports].sort(compareDecisionReports).slice(0, 16);
   return [
     ...renderHeader('complete', snapshot),
     ...renderCounters(snapshot),
@@ -286,15 +334,25 @@ function renderCompleteCard(snapshot: TeamUiSnapshot): string {
     renderFailures(snapshot.failure_highlights.slice(0, 12), '(no residual failure signals)'),
     '',
     '## Remaining Blockers',
-    renderBlockers(snapshot.blockers.slice(0, 10), '(none)')
+    renderBlockers(snapshot.blockers.slice(0, 10), '(none)'),
+    '',
+    '## Decision Reports (Latest)',
+    renderDecisionReports(latestReports, '(no decision reports)'),
+    '',
+    '## Decision Report History',
+    renderDecisionReports(historyReports, '(no decision report history)')
   ].join('\n');
 }
 
-function renderCard(mode: CardMode, snapshot: TeamUiSnapshot): string {
+function renderCard(
+  mode: CardMode,
+  snapshot: TeamUiSnapshot,
+  decisionReports: AgentDecisionReportRecord[]
+): string {
   if (mode === 'launch') return renderLaunchCard(snapshot);
-  if (mode === 'progress') return renderProgressCard(snapshot);
+  if (mode === 'progress') return renderProgressCard(snapshot, decisionReports);
   if (mode === 'timeout') return renderTimeoutCard(snapshot);
-  return renderCompleteCard(snapshot);
+  return renderCompleteCard(snapshot, decisionReports);
 }
 
 function main(): void {
@@ -310,8 +368,11 @@ function main(): void {
       replay_limit: args.replayLimit,
       feed_limit: Math.max(args.recentEventLimit, 10)
     });
+    const decisionReports = server.store.listAgentDecisionReports(args.teamId, {
+      limit: Math.max(args.evidenceLimit * 2, 24)
+    });
 
-    process.stdout.write(`${renderCard(args.mode, snapshot)}\n`);
+    process.stdout.write(`${renderCard(args.mode, snapshot, decisionReports)}\n`);
   } finally {
     server.store.close();
   }

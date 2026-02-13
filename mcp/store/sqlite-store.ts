@@ -5,11 +5,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   AgentCreateInput,
+  AgentDecisionReportRecord,
   AgentRecord,
   AppendMessageInput,
   ArtifactRecord,
   ArtifactRef,
   ClaimTaskInput,
+  CreateAgentDecisionReportInput,
   CreateExecutionAttemptInput,
   InboxRecord,
   MessagePayload,
@@ -301,6 +303,13 @@ function normalizeCompletionPct(value: unknown): number {
   return Math.max(0, Math.min(100, Math.round(parsed)));
 }
 
+function normalizeConfidence(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(1, parsed));
+}
+
 function normalizeNumberList(values: number[] = []): number[] {
   return [...new Set(
     values
@@ -421,6 +430,21 @@ function hydrateTeamWaveState(row: Record<string, unknown>): TeamWaveStateRecord
     metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at)
+  };
+}
+
+function hydrateAgentDecisionReport(row: Record<string, unknown>): AgentDecisionReportRecord {
+  return {
+    report_id: String(row.report_id),
+    team_id: String(row.team_id),
+    agent_id: String(row.agent_id),
+    task_id: String(row.task_id),
+    revision: normalizePositiveInt(row.revision, 1),
+    decision: String(row.decision),
+    summary: String(row.summary),
+    confidence: normalizeConfidence(row.confidence),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at)
   };
 }
 
@@ -1710,6 +1734,117 @@ export class SqliteStore {
 
     this.touchTeam(String(current.team_id));
     return this.getExecutionAttempt(execution_id);
+  }
+
+  createAgentDecisionReport(input: CreateAgentDecisionReportInput): AgentDecisionReportRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const revision = normalizePositiveInt(input.revision, 1);
+    const confidence = normalizeConfidence(input.confidence);
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO agent_decision_reports(
+             report_id, team_id, agent_id, task_id, revision, decision, summary, confidence, metadata_json, created_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.report_id,
+          input.team_id,
+          input.agent_id,
+          input.task_id,
+          revision,
+          String(input.decision),
+          String(input.summary),
+          confidence,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt
+        );
+    });
+    this.touchTeam(input.team_id, createdAt);
+    return this.getAgentDecisionReport(input.report_id);
+  }
+
+  getAgentDecisionReport(report_id: string): AgentDecisionReportRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM agent_decision_reports WHERE report_id = ?')
+      .get(report_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateAgentDecisionReport(row);
+  }
+
+  getLatestAgentDecisionReport(team_id: string, agent_id: string, task_id: string): AgentDecisionReportRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT *
+         FROM agent_decision_reports
+         WHERE team_id = ?
+           AND agent_id = ?
+           AND task_id = ?
+         ORDER BY revision DESC, created_at DESC, report_id DESC
+         LIMIT 1`
+      )
+      .get(team_id, agent_id, task_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateAgentDecisionReport(row);
+  }
+
+  listAgentDecisionReports(
+    team_id: string,
+    options: {
+      task_id?: string;
+      agent_id?: string;
+      limit?: number;
+    } = {}
+  ): AgentDecisionReportRecord[] {
+    const conditions = ['team_id = ?'];
+    const params: Array<string | number> = [team_id];
+
+    if (options.task_id) {
+      conditions.push('task_id = ?');
+      params.push(options.task_id);
+    }
+    if (options.agent_id) {
+      conditions.push('agent_id = ?');
+      params.push(options.agent_id);
+    }
+    const limit = normalizePositiveInt(options.limit ?? 20, 20);
+    params.push(limit);
+
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM agent_decision_reports
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY created_at DESC, revision DESC, report_id DESC
+         LIMIT ?`
+      )
+      .all(...params) as Record<string, unknown>[];
+    return rows.map((row) => hydrateAgentDecisionReport(row));
+  }
+
+  listLatestAgentDecisionReports(team_id: string, limit = 20): AgentDecisionReportRecord[] {
+    const safeLimit = normalizePositiveInt(limit, 20);
+    const rows = this.db
+      .prepare(
+        `SELECT adr.*
+         FROM agent_decision_reports adr
+         INNER JOIN (
+           SELECT team_id, agent_id, task_id, MAX(revision) AS latest_revision
+           FROM agent_decision_reports
+           WHERE team_id = ?
+           GROUP BY team_id, agent_id, task_id
+         ) latest
+           ON latest.team_id = adr.team_id
+          AND latest.agent_id = adr.agent_id
+          AND latest.task_id = adr.task_id
+          AND latest.latest_revision = adr.revision
+         WHERE adr.team_id = ?
+         ORDER BY adr.created_at DESC, adr.report_id DESC
+         LIMIT ?`
+      )
+      .all(team_id, team_id, safeLimit) as Record<string, unknown>[];
+    return rows.map((row) => hydrateAgentDecisionReport(row));
   }
 
   claimTask({ team_id, task_id, agent_id, expected_lock_version }: ClaimTaskInput): TaskMutationResult {

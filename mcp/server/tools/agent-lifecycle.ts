@@ -4,6 +4,7 @@ import { isKnownRole } from '../role-pack.js';
 import { resolvePermissionProfileName } from '../permission-profiles.js';
 import { scanForSecrets } from '../guardrails.js';
 import { resolveMentionRecipients } from '../mention-parser.js';
+import { recordAgentDecisionReport } from '../decision-tracker.js';
 import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
 import type {
   WorkerAdapter,
@@ -1191,6 +1192,78 @@ export function registerAgentLifecycleTools(
       },
       worker_deliveries: workerDeliveries,
       worker_errors: workerErrors
+    };
+  });
+
+  server.registerTool('team_agent_report', 'team_agent_report.schema.json', (input) => {
+    const teamId = readString(input, 'team_id');
+    const agentId = readString(input, 'agent_id');
+    const taskId = readString(input, 'task_id');
+    const decision = String(input.decision ?? '').trim();
+    const summary = String(input.summary ?? '');
+    const revision = readOptionalNumber(input, 'revision');
+    const confidence = readOptionalNumber(input, 'confidence');
+    const metadata = isRecord(input.metadata) ? input.metadata : {};
+    const createdAt = readOptionalString(input, 'created_at') ?? undefined;
+
+    if (!decision) {
+      return { ok: false, error: 'decision is required' };
+    }
+
+    const teamLookup = getTeamOrError(server, teamId);
+    if (teamLookup.error || !teamLookup.team) {
+      return { ok: false, error: teamLookup.error };
+    }
+    const agentLookup = getAgentOrError(server, agentId);
+    if (agentLookup.error || !agentLookup.agent) {
+      return { ok: false, error: agentLookup.error };
+    }
+    const membership = ensureAgentInTeam(agentLookup.agent, teamId, 'agent');
+    if (!membership.ok) {
+      return membership;
+    }
+    const task = server.store.getTask(taskId);
+    if (!task) {
+      return { ok: false, error: `task not found: ${taskId}` };
+    }
+    if (task.team_id !== teamId) {
+      return { ok: false, error: `task not in team ${teamId}: ${taskId}` };
+    }
+
+    const tracked = recordAgentDecisionReport(server.store, {
+      team_id: teamId,
+      agent_id: agentId,
+      task_id: taskId,
+      decision,
+      summary,
+      confidence,
+      metadata,
+      revision,
+      created_at: createdAt
+    });
+    if (!tracked.ok || !tracked.report) {
+      return { ok: false, error: tracked.error ?? 'failed to persist decision report' };
+    }
+
+    server.store.logEvent({
+      team_id: teamId,
+      agent_id: agentId,
+      task_id: taskId,
+      event_type: 'agent_decision_report_recorded',
+      payload: {
+        report_id: tracked.report.report_id,
+        revision: tracked.report.revision,
+        decision: tracked.report.decision,
+        summary_length: tracked.report.summary.length,
+        confidence: tracked.report.confidence,
+        history_count: tracked.history?.length ?? 1
+      }
+    });
+
+    return {
+      ok: true,
+      report: tracked.report,
+      history: tracked.history ?? []
     };
   });
 

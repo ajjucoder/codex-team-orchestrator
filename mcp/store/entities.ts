@@ -325,6 +325,32 @@ export interface RunEventRecord {
   created_at?: string;
 }
 
+export interface AgentDecisionReportRecord {
+  report_id: string;
+  team_id: string;
+  agent_id: string;
+  task_id: string;
+  revision: number;
+  decision: string;
+  summary: string;
+  confidence: number | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CreateAgentDecisionReportInput {
+  report_id: string;
+  team_id: string;
+  agent_id: string;
+  task_id: string;
+  revision: number;
+  decision: string;
+  summary: string;
+  confidence?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface UsageSample {
   id: number;
   team_id: string;
