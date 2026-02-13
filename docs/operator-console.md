@@ -1,6 +1,7 @@
 # Operator Console
 
 `scripts/team-tui.ts` provides the primary deterministic sidecar TUI for Hybrid Agent-Teams operations.
+`scripts/team-tmux-ui.ts` provides the live tmux-oriented sidecar view as a separate command path.
 `scripts/team-card.ts` provides chat-embedded markdown cards (`launch|progress|timeout|complete`) for Codex App/CLI message streams.
 `scripts/team-console.ts` remains supported for backward compatibility.
 
@@ -28,6 +29,12 @@ Command responses always emit `team-tui:command=<name>` and command-specific cou
 - `drain`: `team-tui:drained=<count>`
 - `retry`: `team-tui:retried=<count>`
 
+`team-tmux-ui` supports the same operator command flags in one-shot mode and emits:
+
+- `team-tmux-ui:command=<name>`
+- `team-tmux-ui:error=<message>` on command failure
+- `team-tmux-ui:ok` success marker
+
 ## Runbook
 
 1. Verify current state with one snapshot.
@@ -45,6 +52,8 @@ node --import tsx scripts/team-tui.ts --db .tmp/team.sqlite --team team_abc --co
 node --import tsx scripts/team-tui.ts --db .tmp/team.sqlite --team team_abc --command resume --once --no-input
 node --import tsx scripts/team-tui.ts --db .tmp/team.sqlite --team team_abc --command drain --once --no-input
 node --import tsx scripts/team-tui.ts --db .tmp/team.sqlite --team team_abc --command retry --task task_123 --once --no-input
+node --import tsx scripts/team-tmux-ui.ts --db .tmp/team.sqlite --team team_abc --once --show-wave
+node --import tsx scripts/team-tmux-ui.ts --db .tmp/team.sqlite --team team_abc --command pause --once
 node --import tsx scripts/team-card.ts --db .tmp/team.sqlite --team team_abc --mode progress
 ```
 
@@ -55,4 +64,5 @@ For MVP UI/TUI checks, run:
 ```bash
 node --import tsx --test tests/unit/v3-111.team-card.test.ts
 node --import tsx --test tests/integration/v3-111.tui.integration.test.ts
+node --import tsx --test tests/integration/v4-011.team-tmux-ui.integration.test.ts
 ```
