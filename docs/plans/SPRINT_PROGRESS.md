@@ -93,6 +93,13 @@ A ticket may be marked `done` only if all are present:
 - `node --import tsx --test tests/chaos/v4-001.runtime-recovery.chaos.test.ts` -> pass (ticket `ATX-P2-003`)
 - `npm run verify` -> pass (ticket `ATX-P2-004`)
 
+## Post-Completion Fixes (2026-02-13)
+
+| Ticket | Status | Summary | Changed Files | Linked Tests | Test Pass/Fail | commit_sha | pushed_branch | pr_link |
+|---|---|---|---|---|---|---|---|---|
+| `ATX-P0-003` | done | Treat process-scoped persisted worker sessions as stale after restart and re-establish worker sessions before managed-runtime dispatch/poll. | `mcp/server/tools/agent-lifecycle.ts`, `mcp/server/tools/types.ts`, `tests/unit/v4-002.worker-session-persistence.test.ts`, `tests/integration/v4-002.restart-recovery.integration.test.ts` | `T-ATX-P0-003` | pass (`node --import tsx --test tests/unit/v4-002.worker-session-persistence.test.ts tests/integration/v4-002.restart-recovery.integration.test.ts`; `npm run verify`) | `1c5f12c11d7a8f84ec74415c7c1f7ced18090338` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P0-004` | done | Preserve tmux pane `-t` target format for interrupts (`session:window.pane`) to avoid silent no-op Ctrl-C sends. | `mcp/runtime/tmux-manager.ts`, `tests/unit/v4-003.transport-security.test.ts` | `T-ATX-P0-004` | pass (`node --import tsx --test tests/unit/v4-003.transport-security.test.ts`; `npm run verify`) | `35a98b5f747e90f6a7bb08aaf173ec4dd0f86d3f` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+
 ## Blockers
 
 - None.
