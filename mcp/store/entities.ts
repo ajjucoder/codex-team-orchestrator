@@ -90,6 +90,38 @@ export interface AgentCreateInput {
   metadata?: Record<string, unknown>;
 }
 
+export type WorkerRuntimeSessionState = 'active' | 'idle' | 'interrupted' | 'offline' | 'failed';
+
+export interface WorkerRuntimeSessionRecord {
+  team_id: string;
+  agent_id: string;
+  worker_id: string;
+  provider: string;
+  transport_backend: string | null;
+  session_ref: string | null;
+  pane_ref: string | null;
+  lifecycle_state: WorkerRuntimeSessionState;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string | null;
+}
+
+export interface UpsertWorkerRuntimeSessionInput {
+  team_id: string;
+  agent_id: string;
+  worker_id: string;
+  provider: string;
+  transport_backend?: string | null;
+  session_ref?: string | null;
+  pane_ref?: string | null;
+  lifecycle_state?: WorkerRuntimeSessionState;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+  last_seen_at?: string | null;
+}
+
 export interface MessageRecord {
   message_id: string;
   team_id: string;

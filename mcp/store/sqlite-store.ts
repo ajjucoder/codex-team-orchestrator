@@ -26,7 +26,10 @@ import type {
   TeamStatus,
   UpdateExecutionAttemptInput,
   UpdateTaskInput,
-  UsageSample
+  UsageSample,
+  WorkerRuntimeSessionRecord,
+  WorkerRuntimeSessionState,
+  UpsertWorkerRuntimeSessionInput
 } from './entities.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -253,6 +256,13 @@ function normalizeTeamMode(value: unknown): TeamMode {
   return 'default';
 }
 
+function normalizeWorkerRuntimeSessionState(value: unknown): WorkerRuntimeSessionState {
+  if (value === 'active' || value === 'idle' || value === 'interrupted' || value === 'offline' || value === 'failed') {
+    return value;
+  }
+  return 'active';
+}
+
 function normalizeTeamId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -342,6 +352,23 @@ function hydrateExecutionAttempt(row: Record<string, unknown>): TaskExecutionAtt
     metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at)
+  };
+}
+
+function hydrateWorkerRuntimeSession(row: Record<string, unknown>): WorkerRuntimeSessionRecord {
+  return {
+    team_id: String(row.team_id),
+    agent_id: String(row.agent_id),
+    worker_id: String(row.worker_id),
+    provider: String(row.provider),
+    transport_backend: normalizeTeamId(row.transport_backend),
+    session_ref: normalizeTeamId(row.session_ref),
+    pane_ref: normalizeTeamId(row.pane_ref),
+    lifecycle_state: normalizeWorkerRuntimeSessionState(row.lifecycle_state),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+    last_seen_at: normalizeTeamId(row.last_seen_at)
   };
 }
 
@@ -707,6 +734,128 @@ export class SqliteStore {
         .run(at, at, agentId);
     });
     return this.getAgent(agentId);
+  }
+
+  upsertWorkerRuntimeSession(input: UpsertWorkerRuntimeSessionInput): WorkerRuntimeSessionRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const updatedAt = coerceIsoTimestamp(input.updated_at, createdAt);
+    const lifecycleState = normalizeWorkerRuntimeSessionState(input.lifecycle_state);
+    const lastSeenAt = input.last_seen_at === undefined
+      ? updatedAt
+      : (input.last_seen_at === null ? null : coerceIsoTimestamp(input.last_seen_at, updatedAt));
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO worker_runtime_sessions(
+             agent_id, team_id, worker_id, provider, transport_backend, session_ref, pane_ref,
+             lifecycle_state, metadata_json, created_at, updated_at, last_seen_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent_id) DO UPDATE SET
+             team_id=excluded.team_id,
+             worker_id=excluded.worker_id,
+             provider=excluded.provider,
+             transport_backend=excluded.transport_backend,
+             session_ref=excluded.session_ref,
+             pane_ref=excluded.pane_ref,
+             lifecycle_state=excluded.lifecycle_state,
+             metadata_json=excluded.metadata_json,
+             updated_at=excluded.updated_at,
+             last_seen_at=excluded.last_seen_at`
+        )
+        .run(
+          input.agent_id,
+          input.team_id,
+          input.worker_id,
+          input.provider,
+          input.transport_backend ?? null,
+          input.session_ref ?? null,
+          input.pane_ref ?? null,
+          lifecycleState,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt,
+          updatedAt,
+          lastSeenAt
+        );
+    });
+    this.touchTeam(input.team_id, updatedAt);
+    return this.getWorkerRuntimeSession(input.agent_id);
+  }
+
+  getWorkerRuntimeSession(agentId: string): WorkerRuntimeSessionRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM worker_runtime_sessions WHERE agent_id = ?')
+      .get(agentId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateWorkerRuntimeSession(row);
+  }
+
+  listWorkerRuntimeSessionsByTeam(teamId: string): WorkerRuntimeSessionRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM worker_runtime_sessions WHERE team_id = ? ORDER BY updated_at DESC, agent_id ASC')
+      .all(teamId) as Record<string, unknown>[];
+    return rows.map((row) => hydrateWorkerRuntimeSession(row));
+  }
+
+  updateWorkerRuntimeSessionState({
+    agent_id,
+    lifecycle_state,
+    metadata_patch,
+    touch_seen = false,
+    team_id
+  }: {
+    agent_id: string;
+    lifecycle_state?: WorkerRuntimeSessionState;
+    metadata_patch?: Record<string, unknown>;
+    touch_seen?: boolean;
+    team_id?: string;
+  }): WorkerRuntimeSessionRecord | null {
+    const current = this.getWorkerRuntimeSession(agent_id);
+    if (!current) return null;
+
+    const nextState = lifecycle_state ?? current.lifecycle_state;
+    const nextMetadata = {
+      ...(current.metadata ?? {}),
+      ...(metadata_patch ?? {})
+    };
+    const updatedAt = nowIso();
+    const nextLastSeenAt = touch_seen ? updatedAt : current.last_seen_at;
+    const scopedTeamId = team_id ?? current.team_id;
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `UPDATE worker_runtime_sessions
+           SET lifecycle_state = ?, metadata_json = ?, updated_at = ?, last_seen_at = ?
+           WHERE agent_id = ?`
+        )
+        .run(
+          nextState,
+          JSON.stringify(nextMetadata),
+          updatedAt,
+          nextLastSeenAt,
+          agent_id
+        );
+    });
+    this.touchTeam(scopedTeamId, updatedAt);
+    return this.getWorkerRuntimeSession(agent_id);
+  }
+
+  deleteWorkerRuntimeSession(agentId: string): boolean {
+    const existing = this.getWorkerRuntimeSession(agentId);
+    if (!existing) return false;
+
+    let deleted = 0;
+    this.runWithRetry(() => {
+      const result = this.db
+        .prepare('DELETE FROM worker_runtime_sessions WHERE agent_id = ?')
+        .run(agentId);
+      deleted = Number(result.changes ?? 0);
+    });
+    if (deleted > 0) {
+      this.touchTeam(existing.team_id);
+    }
+    return deleted > 0;
   }
 
   appendMessage(message: AppendMessageInputWithScope): AppendMessageResult {

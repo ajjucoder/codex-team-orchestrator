@@ -353,6 +353,22 @@ function resolveGitIsolationManager(server: ToolServerLike, options: AgentLifecy
   });
 }
 
+function readPersistedWorkerSession(
+  server: ToolServerLike,
+  teamId: string,
+  agentId: string
+): WorkerSessionBinding | null {
+  const persisted = server.store.getWorkerRuntimeSession(agentId);
+  if (!persisted || persisted.team_id !== teamId) return null;
+  if (persisted.lifecycle_state === 'offline') {
+    return null;
+  }
+  return {
+    worker_id: persisted.worker_id,
+    provider: persisted.provider
+  };
+}
+
 function workerEnvelopeFailure(prefix: string, error: { message?: unknown }): ToolResult {
   return {
     ok: false,
@@ -387,7 +403,6 @@ export function registerAgentLifecycleTools(
   const workerAdapterResolution = resolveWorkerAdapter(server, options);
   const workerAdapter = workerAdapterResolution.adapter;
   const gitManager = resolveGitIsolationManager(server, options);
-  const workerSessionByAgentId = new Map<string, WorkerSessionBinding>();
   
   function listActiveAgentsByTeam(teamId: string): AgentRecord[] {
     return server
@@ -479,7 +494,22 @@ export function registerAgentLifecycleTools(
     }
 
     if (workerSession) {
-      workerSessionByAgentId.set(agent.agent_id, workerSession);
+      server.store.upsertWorkerRuntimeSession({
+        team_id: teamId,
+        agent_id: agent.agent_id,
+        worker_id: workerSession.worker_id,
+        provider: workerSession.provider,
+        transport_backend: workerSession.provider,
+        lifecycle_state: 'active',
+        metadata: {
+          role,
+          model: modelAssignment.model,
+          model_source: modelAssignment.model_source
+        },
+        created_at: ts,
+        updated_at: ts,
+        last_seen_at: ts
+      });
     }
 
     return {
@@ -659,7 +689,7 @@ export function registerAgentLifecycleTools(
       return duplicateResponse(duplicate, 'direct');
     }
 
-    const recipientWorkerSession = workerSessionByAgentId.get(toAgentId);
+    const recipientWorkerSession = readPersistedWorkerSession(server, teamId, toAgentId);
     let effectiveWorkerCwd: string | undefined;
     if (workerAdapter && recipientWorkerSession) {
       const assignment = gitManager.allocateForAgent({
@@ -732,6 +762,16 @@ export function registerAgentLifecycleTools(
           }
         });
         if (!delivery.ok) {
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: toAgentId,
+            lifecycle_state: 'failed',
+            metadata_patch: {
+              last_error_code: String(delivery.error.code ?? ''),
+              last_error_message: String(delivery.error.message ?? '')
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
           const rollback = server.store.rollbackMessageInsert(teamId, result.message.message_id);
           server.store.logEvent({
             team_id: teamId,
@@ -756,6 +796,16 @@ export function registerAgentLifecycleTools(
           };
         }
         workerDelivery = delivery.data;
+        server.store.updateWorkerRuntimeSessionState({
+          agent_id: toAgentId,
+          lifecycle_state: 'active',
+          metadata_patch: {
+            last_instruction_id: workerDelivery.instruction_id ?? null,
+            last_delivery_status: workerDelivery.status ?? null
+          },
+          touch_seen: true,
+          team_id: teamId
+        });
       }
     }
 
@@ -958,7 +1008,7 @@ export function registerAgentLifecycleTools(
     let workerPoll: WorkerPollResult | null = null;
     let workerArtifacts: WorkerCollectArtifactsResult['artifacts'] | null = null;
     const workerErrors: Array<{ message?: unknown }> = [];
-    const workerSession = workerSessionByAgentId.get(agentId);
+    const workerSession = readPersistedWorkerSession(server, teamId, agentId);
     const workerAdapterActive = Boolean(workerAdapter && workerSession);
     if (workerAdapter && workerSession) {
       const poll = workerAdapter.poll({
@@ -967,8 +1017,28 @@ export function registerAgentLifecycleTools(
       });
       if (!poll.ok) {
         workerErrors.push(poll.error);
+        server.store.updateWorkerRuntimeSessionState({
+          agent_id: agentId,
+          lifecycle_state: 'failed',
+          metadata_patch: {
+            last_error_code: String(poll.error.code ?? ''),
+            last_error_message: String(poll.error.message ?? '')
+          },
+          touch_seen: true,
+          team_id: teamId
+        });
       } else {
         workerPoll = poll.data;
+        server.store.updateWorkerRuntimeSessionState({
+          agent_id: agentId,
+          lifecycle_state: workerPoll.status === 'interrupted' ? 'interrupted' : 'active',
+          metadata_patch: {
+            last_poll_status: workerPoll.status,
+            last_poll_cursor: workerPoll.cursor ?? null
+          },
+          touch_seen: true,
+          team_id: teamId
+        });
       }
 
       const artifacts = workerAdapter.collectArtifacts({
