@@ -102,6 +102,19 @@ export function registerRecoveryTools(server: ToolServerLike): void {
       max_backoff_ms: maxBackoffMs
     });
     const staleAgents = server.store.markStaleAgentsOffline(teamId, cutoffIso);
+    const activeAgents = server.store.listAgentsByTeam(teamId);
+    const activeAgentIds = new Set(activeAgents.map((agent) => agent.agent_id));
+    const staleAgentIds = new Set(staleAgents.agents.map((agent) => agent.agent_id));
+    const runtimeSessions = server.store.listWorkerRuntimeSessionsByTeam(teamId);
+    const recoveredWorkerSessionAgentIds: string[] = [];
+    for (const session of runtimeSessions) {
+      const shouldDelete = !activeAgentIds.has(session.agent_id) || staleAgentIds.has(session.agent_id);
+      if (!shouldDelete) continue;
+      const deleted = server.store.deleteWorkerRuntimeSession(session.agent_id);
+      if (deleted) {
+        recoveredWorkerSessionAgentIds.push(session.agent_id);
+      }
+    }
     const snapshotAfter = server.store.buildRecoverySnapshot(teamId, {
       now_iso: nowIso,
       agent_stale_ms: staleMs,
@@ -117,6 +130,8 @@ export function registerRecoveryTools(server: ToolServerLike): void {
         recovered_tasks: leaseRecovery.recovered,
         recovered_execution_attempts: recoveredExecutionIds.length,
         recovered_inbox: inboxRecovery.recovered,
+        recovered_worker_sessions: recoveredWorkerSessionAgentIds.length,
+        recovered_worker_session_agent_ids: recoveredWorkerSessionAgentIds,
         inbox_scheduled_retry: inboxRecovery.scheduled_retry,
         inbox_dead_lettered: inboxRecovery.dead_lettered,
         marked_agents_offline: staleAgents.marked_offline,
@@ -133,6 +148,8 @@ export function registerRecoveryTools(server: ToolServerLike): void {
       recovered_execution_attempts: recoveredExecutionIds.length,
       recovered_execution_ids: recoveredExecutionIds,
       recovered_inbox: inboxRecovery.recovered,
+      recovered_worker_sessions: recoveredWorkerSessionAgentIds.length,
+      recovered_worker_session_agent_ids: recoveredWorkerSessionAgentIds,
       inbox_scheduled_retry: inboxRecovery.scheduled_retry,
       inbox_dead_lettered: inboxRecovery.dead_lettered,
       inbox_retry_inbox_ids: inboxRecovery.retry_inbox_ids,
