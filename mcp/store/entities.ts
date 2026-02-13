@@ -122,6 +122,50 @@ export interface UpsertWorkerRuntimeSessionInput {
   last_seen_at?: string | null;
 }
 
+export interface TeamWaveStateRecord {
+  team_id: string;
+  wave_id: number;
+  tick_count: number;
+  dispatched_count: number;
+  recovered_tasks: number;
+  cleaned_assignments: number;
+  dispatched_total: number;
+  recovered_total: number;
+  cleaned_total: number;
+  ready_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  total_tasks: number;
+  completion_pct: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertTeamWaveStateInput {
+  team_id: string;
+  wave_id: number;
+  tick_count: number;
+  dispatched_count: number;
+  recovered_tasks: number;
+  cleaned_assignments: number;
+  dispatched_total: number;
+  recovered_total: number;
+  cleaned_total: number;
+  ready_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  total_tasks: number;
+  completion_pct?: number;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MessageRecord {
   message_id: string;
   team_id: string;

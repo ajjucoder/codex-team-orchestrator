@@ -6,6 +6,14 @@ import { RuntimeGitIsolationManager } from './git-manager.js';
 const DEFAULT_TICK_INTERVAL_MS = 250;
 const DEFAULT_READY_TASK_LIMIT = 200;
 const UNBOUNDED_READY_TASK_LIMIT = 2147483647;
+const IN_PROGRESS_STATUSES = new Set<TaskRecord['status']>([
+  'in_progress',
+  'queued',
+  'dispatching',
+  'executing',
+  'validating',
+  'integrating'
+]);
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -31,6 +39,52 @@ function rotateAgents(agents: AgentRecord[], cursor: number): AgentRecord[] {
     ...agents.slice(start),
     ...agents.slice(0, start)
   ];
+}
+
+function summarizeTaskProgress(tasks: TaskRecord[]): {
+  total_tasks: number;
+  in_progress_tasks: number;
+  blocked_tasks: number;
+  done_tasks: number;
+  cancelled_tasks: number;
+  completion_pct: number;
+} {
+  let inProgressTasks = 0;
+  let blockedTasks = 0;
+  let doneTasks = 0;
+  let cancelledTasks = 0;
+
+  for (const task of tasks) {
+    if (IN_PROGRESS_STATUSES.has(task.status)) {
+      inProgressTasks += 1;
+      continue;
+    }
+    if (task.status === 'blocked' || task.status === 'failed_terminal') {
+      blockedTasks += 1;
+      continue;
+    }
+    if (task.status === 'done') {
+      doneTasks += 1;
+      continue;
+    }
+    if (task.status === 'cancelled') {
+      cancelledTasks += 1;
+    }
+  }
+
+  const totalTasks = tasks.length;
+  const completionPct = totalTasks > 0
+    ? Math.round((doneTasks / totalTasks) * 100)
+    : 0;
+
+  return {
+    total_tasks: totalTasks,
+    in_progress_tasks: inProgressTasks,
+    blocked_tasks: blockedTasks,
+    done_tasks: doneTasks,
+    cancelled_tasks: cancelledTasks,
+    completion_pct: completionPct
+  };
 }
 
 export interface SchedulerOptions {
@@ -251,6 +305,38 @@ export class RuntimeScheduler {
         (normalizeCursor(agentCursor, idleAgents.length) + 1) % idleAgents.length
       );
     }
+
+    const previousWave = this.store.getTeamWaveState(team.team_id);
+    const allTasks = this.store.listTasks(team.team_id);
+    const taskSummary = summarizeTaskProgress(allTasks);
+    const readyTasksCount = this.store.listReadyTasks(team.team_id, UNBOUNDED_READY_TASK_LIMIT).length;
+    const shouldAdvanceWave = dispatches.length > 0 || recovered.recovered > 0 || cleanup.released_count > 0;
+    const nextWaveId = (previousWave?.wave_id ?? 0) + (shouldAdvanceWave ? 1 : 0);
+    const nextTickCount = (previousWave?.tick_count ?? 0) + 1;
+
+    this.store.upsertTeamWaveState({
+      team_id: team.team_id,
+      wave_id: nextWaveId,
+      tick_count: nextTickCount,
+      dispatched_count: dispatches.length,
+      recovered_tasks: recovered.recovered,
+      cleaned_assignments: cleanup.released_count,
+      dispatched_total: (previousWave?.dispatched_total ?? 0) + dispatches.length,
+      recovered_total: (previousWave?.recovered_total ?? 0) + recovered.recovered,
+      cleaned_total: (previousWave?.cleaned_total ?? 0) + cleanup.released_count,
+      ready_tasks: readyTasksCount,
+      in_progress_tasks: taskSummary.in_progress_tasks,
+      blocked_tasks: taskSummary.blocked_tasks,
+      done_tasks: taskSummary.done_tasks,
+      cancelled_tasks: taskSummary.cancelled_tasks,
+      total_tasks: taskSummary.total_tasks,
+      completion_pct: taskSummary.completion_pct,
+      metadata: {
+        queue_cursor: this.queueCursorByTeam.get(team.team_id) ?? 0,
+        agent_cursor: this.agentCursorByTeam.get(team.team_id) ?? 0,
+        dispatch_task_ids: dispatches.map((dispatch) => dispatch.task_id)
+      }
+    });
 
     return {
       team_id: team.team_id,

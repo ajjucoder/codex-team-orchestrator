@@ -18,6 +18,7 @@ import type {
   RunEventRecord,
   TaskCreateInput,
   TaskExecutionAttemptRecord,
+  TeamWaveStateRecord,
   TaskRecord,
   TeamCreateInput,
   TeamHierarchyLinkRecord,
@@ -27,6 +28,7 @@ import type {
   UpdateExecutionAttemptInput,
   UpdateTaskInput,
   UsageSample,
+  UpsertTeamWaveStateInput,
   WorkerRuntimeSessionRecord,
   WorkerRuntimeSessionState,
   UpsertWorkerRuntimeSessionInput
@@ -287,6 +289,18 @@ function normalizePositiveInt(value: unknown, fallback: number, min = 1): number
   return Math.max(min, Math.floor(parsed));
 }
 
+function normalizeNonNegativeInt(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(0, Math.floor(fallback));
+  return Math.max(0, Math.floor(parsed));
+}
+
+function normalizeCompletionPct(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
 function normalizeNumberList(values: number[] = []): number[] {
   return [...new Set(
     values
@@ -369,6 +383,30 @@ function hydrateWorkerRuntimeSession(row: Record<string, unknown>): WorkerRuntim
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     last_seen_at: normalizeTeamId(row.last_seen_at)
+  };
+}
+
+function hydrateTeamWaveState(row: Record<string, unknown>): TeamWaveStateRecord {
+  return {
+    team_id: String(row.team_id),
+    wave_id: normalizeNonNegativeInt(row.wave_id),
+    tick_count: normalizeNonNegativeInt(row.tick_count),
+    dispatched_count: normalizeNonNegativeInt(row.dispatched_count),
+    recovered_tasks: normalizeNonNegativeInt(row.recovered_tasks),
+    cleaned_assignments: normalizeNonNegativeInt(row.cleaned_assignments),
+    dispatched_total: normalizeNonNegativeInt(row.dispatched_total),
+    recovered_total: normalizeNonNegativeInt(row.recovered_total),
+    cleaned_total: normalizeNonNegativeInt(row.cleaned_total),
+    ready_tasks: normalizeNonNegativeInt(row.ready_tasks),
+    in_progress_tasks: normalizeNonNegativeInt(row.in_progress_tasks),
+    blocked_tasks: normalizeNonNegativeInt(row.blocked_tasks),
+    done_tasks: normalizeNonNegativeInt(row.done_tasks),
+    cancelled_tasks: normalizeNonNegativeInt(row.cancelled_tasks),
+    total_tasks: normalizeNonNegativeInt(row.total_tasks),
+    completion_pct: normalizeCompletionPct(row.completion_pct),
+    metadata: parseJSON<Record<string, unknown>>(row.metadata_json, {}),
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at)
   };
 }
 
@@ -856,6 +894,80 @@ export class SqliteStore {
       this.touchTeam(existing.team_id);
     }
     return deleted > 0;
+  }
+
+  upsertTeamWaveState(input: UpsertTeamWaveStateInput): TeamWaveStateRecord | null {
+    const createdAt = coerceIsoTimestamp(input.created_at, nowIso());
+    const updatedAt = coerceIsoTimestamp(input.updated_at, createdAt);
+    const totalTasks = normalizeNonNegativeInt(input.total_tasks);
+    const doneTasks = normalizeNonNegativeInt(input.done_tasks);
+    const derivedCompletionPct = totalTasks > 0
+      ? Math.round((doneTasks / totalTasks) * 100)
+      : 0;
+    const completionPct = input.completion_pct === undefined
+      ? derivedCompletionPct
+      : normalizeCompletionPct(input.completion_pct);
+
+    this.runWithRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO team_wave_state(
+             team_id, wave_id, tick_count, dispatched_count, recovered_tasks, cleaned_assignments,
+             dispatched_total, recovered_total, cleaned_total,
+             ready_tasks, in_progress_tasks, blocked_tasks, done_tasks, cancelled_tasks, total_tasks,
+             completion_pct, metadata_json, created_at, updated_at
+           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(team_id) DO UPDATE SET
+             wave_id=excluded.wave_id,
+             tick_count=excluded.tick_count,
+             dispatched_count=excluded.dispatched_count,
+             recovered_tasks=excluded.recovered_tasks,
+             cleaned_assignments=excluded.cleaned_assignments,
+             dispatched_total=excluded.dispatched_total,
+             recovered_total=excluded.recovered_total,
+             cleaned_total=excluded.cleaned_total,
+             ready_tasks=excluded.ready_tasks,
+             in_progress_tasks=excluded.in_progress_tasks,
+             blocked_tasks=excluded.blocked_tasks,
+             done_tasks=excluded.done_tasks,
+             cancelled_tasks=excluded.cancelled_tasks,
+             total_tasks=excluded.total_tasks,
+             completion_pct=excluded.completion_pct,
+             metadata_json=excluded.metadata_json,
+             updated_at=excluded.updated_at`
+        )
+        .run(
+          input.team_id,
+          normalizeNonNegativeInt(input.wave_id),
+          normalizeNonNegativeInt(input.tick_count),
+          normalizeNonNegativeInt(input.dispatched_count),
+          normalizeNonNegativeInt(input.recovered_tasks),
+          normalizeNonNegativeInt(input.cleaned_assignments),
+          normalizeNonNegativeInt(input.dispatched_total),
+          normalizeNonNegativeInt(input.recovered_total),
+          normalizeNonNegativeInt(input.cleaned_total),
+          normalizeNonNegativeInt(input.ready_tasks),
+          normalizeNonNegativeInt(input.in_progress_tasks),
+          normalizeNonNegativeInt(input.blocked_tasks),
+          doneTasks,
+          normalizeNonNegativeInt(input.cancelled_tasks),
+          totalTasks,
+          completionPct,
+          JSON.stringify(input.metadata ?? {}),
+          createdAt,
+          updatedAt
+        );
+    });
+    this.touchTeam(input.team_id, updatedAt);
+    return this.getTeamWaveState(input.team_id);
+  }
+
+  getTeamWaveState(teamId: string): TeamWaveStateRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM team_wave_state WHERE team_id = ?')
+      .get(teamId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return hydrateTeamWaveState(row);
   }
 
   appendMessage(message: AppendMessageInputWithScope): AppendMessageResult {

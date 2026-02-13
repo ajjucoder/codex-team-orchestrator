@@ -359,6 +359,28 @@ export function buildTeamUiState(
   const totalTasks = tasks.length;
   const doneTasks = taskCounts.done;
   const openTasks = totalTasks - doneTasks - taskCounts.cancelled;
+  const completion = completionPct(doneTasks, totalTasks);
+  const waveState = store.getTeamWaveState(teamId);
+  const waveMetrics = {
+    source: waveState ? 'persisted' : 'derived',
+    wave_id: Number(waveState?.wave_id ?? 0),
+    tick_count: Number(waveState?.tick_count ?? 0),
+    dispatched_count: Number(waveState?.dispatched_count ?? 0),
+    recovered_tasks: Number(waveState?.recovered_tasks ?? 0),
+    cleaned_assignments: Number(waveState?.cleaned_assignments ?? 0),
+    dispatched_total: Number(waveState?.dispatched_total ?? 0),
+    recovered_total: Number(waveState?.recovered_total ?? 0),
+    cleaned_total: Number(waveState?.cleaned_total ?? 0),
+    ready_tasks: Number(recoverySnapshot.queue.ready_tasks ?? waveState?.ready_tasks ?? 0),
+    in_progress_tasks: Number(recoverySnapshot.queue.in_progress_tasks ?? waveState?.in_progress_tasks ?? 0),
+    blocked_tasks: Number(recoverySnapshot.queue.blocked_tasks ?? waveState?.blocked_tasks ?? 0),
+    done_tasks: doneTasks,
+    cancelled_tasks: taskCounts.cancelled,
+    total_tasks: totalTasks,
+    completion_pct: completion,
+    updated_at: waveState?.updated_at ?? team.updated_at,
+    metadata: waveState?.metadata ?? {}
+  };
 
   return {
     team: {
@@ -395,7 +417,7 @@ export function buildTeamUiState(
         }))
     },
     progress: {
-      completion_pct: completionPct(doneTasks, totalTasks),
+      completion_pct: completion,
       done_tasks: doneTasks,
       total_tasks: totalTasks,
       queue_depth: recoverySnapshot.queue.open_tasks,
@@ -403,7 +425,8 @@ export function buildTeamUiState(
       in_progress_tasks: recoverySnapshot.queue.in_progress_tasks,
       blocked_tasks: recoverySnapshot.queue.blocked_tasks,
       pending_inbox: recoverySnapshot.inbox.pending_count,
-      usage: summary.usage
+      usage: summary.usage,
+      wave: waveMetrics
     },
     blockers: {
       blocked_tasks: blockedTasks,
