@@ -2,11 +2,18 @@ import type { AgentRecord, TaskRecord, TeamRecord } from '../store/entities.js';
 import type { SqliteStore } from '../store/sqlite-store.js';
 import { createFairTaskQueue } from './queue.js';
 import { RuntimeGitIsolationManager } from './git-manager.js';
-import { analyzeTaskDag, type DagDependencyEdge } from './dag-analyzer.js';
+import {
+  analyzeTaskDag,
+  type DagAnalysisResult,
+  type DagDependencyEdge
+} from './dag-analyzer.js';
 
 const DEFAULT_TICK_INTERVAL_MS = 250;
 const DEFAULT_READY_TASK_LIMIT = 200;
 const UNBOUNDED_READY_TASK_LIMIT = 2147483647;
+const DEFAULT_DAG_COMPUTE_WARN_MS = 25;
+const DEFAULT_DAG_TASK_WARN_COUNT = 250;
+const DEFAULT_DAG_EDGE_WARN_COUNT = 750;
 const IN_PROGRESS_STATUSES = new Set<TaskRecord['status']>([
   'in_progress',
   'queued',
@@ -18,6 +25,10 @@ const IN_PROGRESS_STATUSES = new Set<TaskRecord['status']>([
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -41,6 +52,16 @@ function normalizeCursor(cursor: number, size: number): number {
   const rounded = Number.isFinite(cursor) ? Math.floor(cursor) : 0;
   const normalized = rounded % size;
   return normalized < 0 ? normalized + size : normalized;
+}
+
+function buildDagSignature(tasks: TaskRecord[], edges: DagDependencyEdge[]): string {
+  const taskTokens = tasks
+    .map((task) => `${task.task_id}:${task.priority}:${task.created_at}`)
+    .sort(compareText);
+  const edgeTokens = edges
+    .map((edge) => `${edge.task_id}->${edge.depends_on_task_id}`)
+    .sort(compareText);
+  return `t:${taskTokens.join('|')}#e:${edgeTokens.join('|')}`;
 }
 
 function rotateAgents(agents: AgentRecord[], cursor: number): AgentRecord[] {
@@ -133,6 +154,23 @@ export interface SchedulerTickResult {
   dispatches: SchedulerDispatch[];
 }
 
+interface TeamDagCacheEntry {
+  signature: string;
+  analysis: DagAnalysisResult;
+  task_count: number;
+  edge_count: number;
+  recomputed_at: string;
+}
+
+interface WaveDispatchDagContext {
+  dag: DagAnalysisResult;
+  cache_hit: boolean;
+  recomputed: boolean;
+  compute_ms: number;
+  task_count: number;
+  edge_count: number;
+}
+
 export class RuntimeScheduler {
   readonly store: SqliteStore;
   readonly tickIntervalMs: number;
@@ -143,6 +181,7 @@ export class RuntimeScheduler {
   private timer: NodeJS.Timeout | null;
   private readonly queueCursorByTeam: Map<string, number>;
   private readonly agentCursorByTeam: Map<string, number>;
+  private readonly dagCacheByTeam: Map<string, TeamDagCacheEntry>;
   private ticking: boolean;
 
   constructor(options: SchedulerOptions) {
@@ -156,6 +195,7 @@ export class RuntimeScheduler {
     this.timer = null;
     this.queueCursorByTeam = new Map();
     this.agentCursorByTeam = new Map();
+    this.dagCacheByTeam = new Map();
     this.ticking = false;
   }
 
@@ -192,6 +232,12 @@ export class RuntimeScheduler {
     this.ticking = true;
     try {
       const teams = this.store.listActiveTeams();
+      const activeTeamIds = new Set(teams.map((team) => team.team_id));
+      for (const teamId of this.dagCacheByTeam.keys()) {
+        if (!activeTeamIds.has(teamId)) {
+          this.dagCacheByTeam.delete(teamId);
+        }
+      }
       const inactiveTeams = this
         .store
         .listTeams()
@@ -267,7 +313,29 @@ export class RuntimeScheduler {
     let dispatchMode: 'fair_queue' | 'wave_dispatch' | 'wave_dispatch_fallback' = 'fair_queue';
     let selectedWave: number | null = null;
     let cycleTaskIds: string[] = [];
+    let dagCacheHit = false;
+    let dagRecomputed = false;
+    let dagComputeMs = 0;
+    let dagTaskCount = 0;
+    let dagEdgeCount = 0;
+    let dagPerfGuardTriggered = false;
+    let dagPerfGuardThresholdMs = DEFAULT_DAG_COMPUTE_WARN_MS;
+    let dagPerfGuardThresholdTasks = DEFAULT_DAG_TASK_WARN_COUNT;
+    let dagPerfGuardThresholdEdges = DEFAULT_DAG_EDGE_WARN_COUNT;
     if (waveDispatchEnabled) {
+      const perfGuardPolicy = asRecord(waveDispatchPolicy.perf_guard);
+      dagPerfGuardThresholdMs = toPositiveInt(
+        perfGuardPolicy.max_dag_compute_ms,
+        DEFAULT_DAG_COMPUTE_WARN_MS
+      );
+      dagPerfGuardThresholdTasks = toPositiveInt(
+        perfGuardPolicy.max_dag_tasks,
+        DEFAULT_DAG_TASK_WARN_COUNT
+      );
+      dagPerfGuardThresholdEdges = toPositiveInt(
+        perfGuardPolicy.max_dag_edges,
+        DEFAULT_DAG_EDGE_WARN_COUNT
+      );
       const dependencyEdges = this
         .store
         .listTaskDependencyEdges(team.team_id)
@@ -276,7 +344,35 @@ export class RuntimeScheduler {
           depends_on_task_id: String(edge.depends_on_task_id ?? '')
         }))
         .filter((edge) => edge.task_id.length > 0 && edge.depends_on_task_id.length > 0) as DagDependencyEdge[];
-      const dag = analyzeTaskDag(allTasks, dependencyEdges);
+      const dagContext = this.resolveWaveDispatchDag(team.team_id, allTasks, dependencyEdges);
+      const dag = dagContext.dag;
+      dagCacheHit = dagContext.cache_hit;
+      dagRecomputed = dagContext.recomputed;
+      dagComputeMs = dagContext.compute_ms;
+      dagTaskCount = dagContext.task_count;
+      dagEdgeCount = dagContext.edge_count;
+      if (dagRecomputed) {
+        dagPerfGuardTriggered = (
+          dagComputeMs > dagPerfGuardThresholdMs
+          || dagTaskCount > dagPerfGuardThresholdTasks
+          || dagEdgeCount > dagPerfGuardThresholdEdges
+        );
+        if (dagPerfGuardTriggered) {
+          this.store.logEvent({
+            team_id: team.team_id,
+            event_type: 'scheduler_wave_dispatch_perf_guard',
+            payload: {
+              dag_compute_ms: dagComputeMs,
+              dag_task_count: dagTaskCount,
+              dag_edge_count: dagEdgeCount,
+              max_dag_compute_ms: dagPerfGuardThresholdMs,
+              max_dag_tasks: dagPerfGuardThresholdTasks,
+              max_dag_edges: dagPerfGuardThresholdEdges
+            },
+            created_at: nowIso()
+          });
+        }
+      }
       if (dag.has_cycle) {
         dispatchMode = 'wave_dispatch_fallback';
         cycleTaskIds = dag.cycle_task_ids;
@@ -398,7 +494,18 @@ export class RuntimeScheduler {
         wave_dispatch_enabled: waveDispatchEnabled,
         dispatch_mode: dispatchMode,
         selected_wave: Number.isFinite(selectedWave ?? Number.NaN) ? selectedWave : null,
-        cycle_task_ids: cycleTaskIds.slice(0, 20)
+        cycle_task_ids: cycleTaskIds.slice(0, 20),
+        dag_cache_hit: dagCacheHit,
+        dag_recomputed: dagRecomputed,
+        dag_compute_ms: dagComputeMs,
+        dag_task_count: dagTaskCount,
+        dag_edge_count: dagEdgeCount,
+        dag_perf_guard: {
+          triggered: dagPerfGuardTriggered,
+          max_dag_compute_ms: dagPerfGuardThresholdMs,
+          max_dag_tasks: dagPerfGuardThresholdTasks,
+          max_dag_edges: dagPerfGuardThresholdEdges
+        }
       }
     });
 
@@ -408,6 +515,45 @@ export class RuntimeScheduler {
       cleaned_assignments: cleanup.released_count,
       dispatched_count: dispatches.length,
       dispatches
+    };
+  }
+
+  private resolveWaveDispatchDag(
+    teamId: string,
+    tasks: TaskRecord[],
+    dependencyEdges: DagDependencyEdge[]
+  ): WaveDispatchDagContext {
+    const signature = buildDagSignature(tasks, dependencyEdges);
+    const cached = this.dagCacheByTeam.get(teamId);
+    if (cached && cached.signature === signature) {
+      return {
+        dag: cached.analysis,
+        cache_hit: true,
+        recomputed: false,
+        compute_ms: 0,
+        task_count: cached.task_count,
+        edge_count: cached.edge_count
+      };
+    }
+
+    const startedAt = Date.now();
+    const dag = analyzeTaskDag(tasks, dependencyEdges);
+    const computeMs = Math.max(0, Date.now() - startedAt);
+    this.dagCacheByTeam.set(teamId, {
+      signature,
+      analysis: dag,
+      task_count: tasks.length,
+      edge_count: dependencyEdges.length,
+      recomputed_at: nowIso()
+    });
+
+    return {
+      dag,
+      cache_hit: false,
+      recomputed: true,
+      compute_ms: computeMs,
+      task_count: tasks.length,
+      edge_count: dependencyEdges.length
     };
   }
 
