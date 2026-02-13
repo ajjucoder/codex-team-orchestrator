@@ -124,6 +124,10 @@ test('V3-111 integration: team-tui command path and status output are determinis
     assert.match(statusOutput, /@infra-dev/);
     assert.match(statusOutput, /recent-feed:/);
     assert.match(statusOutput, /team-tui:ok/);
+    assert.equal(statusOutput.includes('wave source='), false);
+
+    const statusWithWaveOutput = runTui(teamId, ['--command', 'none', '--show-wave']);
+    assert.match(statusWithWaveOutput, /wave source=(derived|persisted) id=\d+ tick=\d+ dispatched=\d+ ready=\d+ done=\d+\/\d+ completion=\d+%/);
 
     const drainOutput = runTui(teamId, ['--command', 'drain']);
     assert.match(drainOutput, /team-tui:command=drain/);

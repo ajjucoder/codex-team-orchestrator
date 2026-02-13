@@ -31,6 +31,7 @@ interface Args {
   failureLimit: number;
   replayLimit: number;
   feedLimit: number;
+  showWave: boolean;
 }
 
 interface TaskCommandRow {
@@ -70,7 +71,8 @@ function parseArgs(argv: string[]): Args {
     evidenceLimit: 12,
     failureLimit: 12,
     replayLimit: 360,
-    feedLimit: 14
+    feedLimit: 14,
+    showWave: false
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -142,6 +144,10 @@ function parseArgs(argv: string[]): Args {
     if (arg === '--feed-limit') {
       args.feedLimit = readPositiveInt(argv[index + 1], args.feedLimit, 1, 60);
       index += 1;
+      continue;
+    }
+    if (arg === '--show-wave') {
+      args.showWave = true;
       continue;
     }
 
@@ -275,7 +281,7 @@ function renderFeed(feed: TeamSnapshotFeedItem[]): string[] {
   });
 }
 
-function render(snapshot: TeamUiSnapshot, notices: RuntimeNotice): void {
+function render(snapshot: TeamUiSnapshot, notices: RuntimeNotice, showWave: boolean): void {
   if (process.stdout.isTTY) {
     process.stdout.write('\x1b[2J\x1b[H');
   }
@@ -310,6 +316,12 @@ function render(snapshot: TeamUiSnapshot, notices: RuntimeNotice): void {
   console.log(
     `queue depth=${snapshot.progress.queue_depth} ready=${snapshot.progress.ready_tasks} in_progress=${snapshot.progress.in_progress_tasks} blocked=${snapshot.progress.blocked_tasks} pending_inbox=${snapshot.progress.pending_inbox}`
   );
+  if (showWave && snapshot.progress.wave) {
+    const wave = snapshot.progress.wave;
+    console.log(
+      `wave source=${wave.source} id=${wave.wave_id} tick=${wave.tick_count} dispatched=${wave.dispatched_count} ready=${wave.ready_tasks} done=${wave.done_tasks}/${wave.total_tasks} completion=${wave.completion_pct}%`
+    );
+  }
 
   console.log('');
   console.log('worker-tree:');
@@ -465,7 +477,7 @@ async function main(): Promise<void> {
         feed_limit: args.feedLimit
       });
 
-      render(snapshot, notices);
+      render(snapshot, notices, args.showWave);
 
       if (args.once) {
         break;
