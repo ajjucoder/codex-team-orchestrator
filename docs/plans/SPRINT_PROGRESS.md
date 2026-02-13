@@ -8,10 +8,10 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `15/17 (88.2%)`
+- `Overall`: `16/17 (94.1%)`
 - `P0`: `7/7 (100.0%)`
 - `P1`: `6/6 (100.0%)`
-- `P2`: `2/4 (50.0%)`
+- `P2`: `3/4 (75.0%)`
 
 Formula:
 - `overall_completion_pct = done_tickets / total_tickets * 100`
@@ -50,8 +50,8 @@ Formula:
 | `ATX-P1-006` | P1 | done | `scripts/team-tmux-ui.ts`, `tests/integration/v4-011.team-tmux-ui.integration.test.ts`, `docs/operator-console.md`, `package.json` | `T-ATX-P1-006` | pass (`npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts tests/integration/v4-011.team-tmux-ui.integration.test.ts`) | `9fc15f69277b1b4c7e129891df3bcdd1bfaf368b` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P2-001` | P2 | done | `mcp/runtime/scheduler.ts`, `tests/unit/v4-013.scheduler-dag-perf.test.ts` | `T-ATX-P2-001` | pass (`npm run test:unit:ts -- tests/unit/v4-013.scheduler-dag-perf.test.ts`) | `8be2c80a4e68d06bed0f4a39bdb47764c12af35c` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P2-002` | P2 | done | `mcp/runtime/model-router.ts`, `mcp/runtime/transports/tmux-transport.ts`, `mcp/runtime/tmux-manager.ts`, `tests/unit/v4-014.backend-command-builder.test.ts` | `T-ATX-P2-002` | pass (`npm run test:unit:ts -- tests/unit/v4-014.backend-command-builder.test.ts`) | `1504480597b5f7ea90c258e7a43e740aa4dfe4bc` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P2-003` | P2 | in_progress | pending | `T-ATX-P2-003` | pending | pending | pending | pending |
-| `ATX-P2-004` | P2 | todo | pending | `T-ATX-P2-004` | pending | pending | pending | pending |
+| `ATX-P2-003` | P2 | done | `mcp/server/tools/recovery.ts`, `tests/integration/v4-012.runtime-recovery.integration.test.ts`, `tests/chaos/v4-001.runtime-recovery.chaos.test.ts` | `T-ATX-P2-003` | pass (`npm run test:integration:ts -- tests/integration/v4-012.runtime-recovery.integration.test.ts`; `node --import tsx --test tests/chaos/v4-001.runtime-recovery.chaos.test.ts`) | `a9ce1e950a352f06dba5e931fad3a4fd546cbf41` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P2-004` | P2 | in_progress | pending | `T-ATX-P2-004` | pending | pending | pending | pending |
 
 ## Completion Rule (Mandatory)
 
@@ -89,6 +89,8 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v3-111.tui.integration.test.ts tests/integration/v4-011.team-tmux-ui.integration.test.ts` -> pass (ticket `ATX-P1-006`)
 - `npm run test:unit:ts -- tests/unit/v4-013.scheduler-dag-perf.test.ts` -> pass (ticket `ATX-P2-001`)
 - `npm run test:unit:ts -- tests/unit/v4-014.backend-command-builder.test.ts` -> pass (ticket `ATX-P2-002`)
+- `npm run test:integration:ts -- tests/integration/v4-012.runtime-recovery.integration.test.ts` -> pass (ticket `ATX-P2-003`)
+- `node --import tsx --test tests/chaos/v4-001.runtime-recovery.chaos.test.ts` -> pass (ticket `ATX-P2-003`)
 
 ## Blockers
 
@@ -96,6 +98,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P2-003` resilience chaos + integration coverage.
-2. Execute `ATX-P2-004` docs/release gate hardening.
+1. Execute `ATX-P2-004` docs/release gate hardening.
+2. Run full verify gate after documentation/release updates.
 3. Run linked tests per ticket and update this tracker after each status transition.
