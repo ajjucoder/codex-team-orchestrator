@@ -8,6 +8,11 @@ import { RuntimeScheduler } from '../runtime/scheduler.js';
 import { RuntimeGitIsolationManager } from '../runtime/git-manager.js';
 import type { WorkerAdapter } from '../runtime/worker-adapter.js';
 import { createCodexWorkerAdapter, type CodexTransport } from '../runtime/providers/codex.js';
+import {
+  createCodexTransport,
+  type CodexTransportFactoryOptions,
+  type ManagedRuntimeTransportMode
+} from '../runtime/transport-factory.js';
 import type { ToolServerLike } from './tools/types.js';
 
 interface StoreFactoryOptions {
@@ -30,6 +35,8 @@ export interface CreateServerOptions {
     enabled?: boolean;
     provider?: 'codex';
     transport?: CodexTransport;
+    transportMode?: ManagedRuntimeTransportMode;
+    transportFactory?: Omit<CodexTransportFactoryOptions, 'mode'>;
   };
   workerAdapter?: WorkerAdapter;
   gitManager?: RuntimeGitIsolationManager;
@@ -63,6 +70,16 @@ function resolveBootstrap(options: CreateServerOptions, store: SqliteStore): Boo
       throw new Error(`unsupported managed runtime provider: ${provider}`);
     }
     workerAdapter = createCodexWorkerAdapter(options.managedRuntime.transport);
+  } else if (!workerAdapter && managedRuntimeEnabled) {
+    const provider = options.managedRuntime?.provider ?? 'codex';
+    if (provider !== 'codex') {
+      throw new Error(`unsupported managed runtime provider: ${provider}`);
+    }
+    const transport = createCodexTransport({
+      ...(options.managedRuntime?.transportFactory ?? {}),
+      mode: options.managedRuntime?.transportMode
+    });
+    workerAdapter = createCodexWorkerAdapter(transport.transport);
   }
 
   const gitManager = options.gitManager
