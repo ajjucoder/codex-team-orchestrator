@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { WorkerProviderError, type WorkerArtifactEnvelope, type WorkerCollectArtifactsInput, type WorkerInterruptInput, type WorkerPollInput, type WorkerSendInstructionInput, type WorkerSpawnInput } from '../worker-adapter.js';
+import { buildBackendCommand, listSupportedBackends } from '../model-router.js';
 import { TmuxManager } from '../tmux-manager.js';
 
 const DEFAULT_MAX_INSTRUCTION_BYTES = 64 * 1024;
@@ -31,6 +32,8 @@ interface TmuxSessionState {
   worker_id: string;
   session_name: string;
   pane_ref: string;
+  backend: string;
+  launch_command: string[];
   status: 'spawned' | 'running' | 'interrupted' | 'failed';
   events: Record<string, unknown>[];
 }
@@ -66,6 +69,13 @@ function normalizeSessionName(input: WorkerSpawnInput): string {
 function normalizeMetadata(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function readBackendName(metadata: Record<string, unknown>): string {
+  const value = metadata.backend;
+  if (typeof value !== 'string') return 'codex';
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : 'codex';
 }
 
 function frameHash(frame: string): string {
@@ -148,13 +158,42 @@ export class TmuxTransport {
 
   spawn(input: WorkerSpawnInput): unknown {
     const sessionName = normalizeSessionName(input);
-    const paneRef = this.manager.createDetachedSession(sessionName);
+    const metadata = normalizeMetadata(input.metadata);
+    const requestedBackend = readBackendName(metadata);
+    let launchCommand: string[];
+    let resolvedBackend: string;
+    try {
+      const backendCommand = buildBackendCommand({
+        backend: requestedBackend,
+        role: input.role,
+        model: input.model,
+        metadata
+      });
+      launchCommand = [backendCommand.command, ...backendCommand.args];
+      resolvedBackend = backendCommand.backend;
+    } catch (error) {
+      throw new WorkerProviderError(
+        `tmux spawn backend selection failed: ${error instanceof Error ? error.message : String(error)}`,
+        {
+          code: 'BACKEND_COMMAND_UNSUPPORTED',
+          retryable: false,
+          details: {
+            requested_backend: requestedBackend,
+            supported_backends: listSupportedBackends()
+          }
+        }
+      );
+    }
+
+    const paneRef = this.manager.createDetachedSession(sessionName, launchCommand);
     const workerId = `tmux_${randomUUID().replace(/-/g, '')}`;
 
     this.sessionsByWorkerId.set(workerId, {
       worker_id: workerId,
       session_name: sessionName,
       pane_ref: paneRef,
+      backend: resolvedBackend,
+      launch_command: launchCommand,
       status: 'running',
       events: []
     });
@@ -165,7 +204,9 @@ export class TmuxTransport {
       metadata: {
         session_name: sessionName,
         pane_ref: paneRef,
-        transport_backend: 'tmux'
+        transport_backend: 'tmux',
+        runtime_backend: resolvedBackend,
+        launch_command: launchCommand
       }
     };
   }
@@ -212,6 +253,8 @@ export class TmuxTransport {
         transport_backend: 'tmux',
         session_name: session.session_name,
         pane_ref: session.pane_ref,
+        runtime_backend: session.backend,
+        launch_command: session.launch_command,
         frame_bytes: encoded.byte_length
       }
     };

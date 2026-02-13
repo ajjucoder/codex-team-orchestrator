@@ -54,9 +54,12 @@ export class TmuxManager {
     this.bufferPrefix = sanitizeToken(options.bufferPrefix ?? 'atx-frame', 'atx-frame');
   }
 
-  createDetachedSession(sessionName: string): string {
+  createDetachedSession(sessionName: string, launchCommand: string[] = []): string {
     const normalizedSession = sanitizeToken(sessionName, 'atx_session');
-    this.runner(['new-session', '-d', '-s', normalizedSession]);
+    const commandArgs = launchCommand
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0);
+    this.runner(['new-session', '-d', '-s', normalizedSession, ...commandArgs]);
     return `${normalizedSession}:0.0`;
   }
 
