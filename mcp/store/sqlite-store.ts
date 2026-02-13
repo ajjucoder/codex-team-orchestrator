@@ -318,16 +318,30 @@ function normalizeStringList(values: string[] = []): string[] {
   )];
 }
 
+function computeRecipientSetHash(recipientAgentIds: string[] = []): string | null {
+  const normalized = normalizeStringList(recipientAgentIds).sort((a, b) => a.localeCompare(b));
+  if (normalized.length === 0) return null;
+  return sha256(normalized.join('\n'));
+}
+
 function computeMessageRouteKey({
   delivery_mode,
   from_agent_id,
-  to_agent_id = null
-}: Pick<MessageRecord, 'delivery_mode' | 'from_agent_id'> & { to_agent_id?: string | null }): string {
+  to_agent_id = null,
+  recipient_agent_ids = []
+}: Pick<MessageRecord, 'delivery_mode' | 'from_agent_id'> & {
+  to_agent_id?: string | null;
+  recipient_agent_ids?: string[];
+}): string {
+  const recipientSetHash = computeRecipientSetHash(recipient_agent_ids);
   if (delivery_mode === 'broadcast') {
     return `broadcast:${from_agent_id}`;
   }
   if (delivery_mode === 'direct') {
     return `direct:${from_agent_id}->${to_agent_id ?? ''}`;
+  }
+  if (delivery_mode === 'group') {
+    return `group:${from_agent_id}->${recipientSetHash ?? 'none'}`;
   }
   return `${delivery_mode}:${from_agent_id}->${to_agent_id ?? ''}`;
 }
@@ -971,10 +985,16 @@ export class SqliteStore {
   }
 
   appendMessage(message: AppendMessageInputWithScope): AppendMessageResult {
+    const normalizedRecipients = normalizeStringList(message.recipient_agent_ids ?? []);
+    if (message.delivery_mode === 'group' && normalizedRecipients.length === 0) {
+      throw new Error('group delivery_mode requires non-empty recipient_agent_ids');
+    }
+
     const routeKey = computeMessageRouteKey({
       delivery_mode: message.delivery_mode,
       from_agent_id: message.from_agent_id,
-      to_agent_id: message.to_agent_id ?? null
+      to_agent_id: message.to_agent_id ?? null,
+      recipient_agent_ids: normalizedRecipients
     });
     const idempotencyScope = normalizeIdempotencyScope(message.idempotency_scope, routeKey);
     const normalizedCreatedAt = coerceIsoTimestamp(message.created_at, nowIso());
@@ -1022,15 +1042,14 @@ export class SqliteStore {
           normalizedCreatedAt
         );
 
-      if (message.recipient_agent_ids?.length) {
-        const recipientIds = normalizeStringList(message.recipient_agent_ids);
+      if (normalizedRecipients.length) {
         const stmt = this.db.prepare(
           `INSERT OR IGNORE INTO inbox(
              message_id, team_id, agent_id, delivered_at, ack_at,
              attempt_count, next_attempt_at, last_attempt_at, last_error, dead_letter_at
            ) VALUES(?, ?, ?, ?, NULL, 0, ?, NULL, NULL, NULL)`
         );
-        for (const agentId of recipientIds) {
+        for (const agentId of normalizedRecipients) {
           stmt.run(message.message_id, message.team_id, agentId, normalizedCreatedAt, normalizedCreatedAt);
         }
       }
@@ -1113,12 +1132,17 @@ export class SqliteStore {
     team_id,
     from_agent_id,
     to_agent_id = null,
-    delivery_mode
-  }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & { to_agent_id?: string | null }): MessageRecord | null {
+    delivery_mode,
+    recipient_agent_ids = []
+  }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & {
+    to_agent_id?: string | null;
+    recipient_agent_ids?: string[];
+  }): MessageRecord | null {
     const routeKey = computeMessageRouteKey({
       delivery_mode,
       from_agent_id,
-      to_agent_id
+      to_agent_id,
+      recipient_agent_ids
     });
     const row = this.db
       .prepare(
@@ -1143,11 +1167,13 @@ export class SqliteStore {
     from_agent_id,
     to_agent_id = null,
     delivery_mode,
+    recipient_agent_ids = [],
     payload,
     within_ms = 120000,
     limit = 25
   }: Pick<MessageRecord, 'team_id' | 'from_agent_id' | 'delivery_mode'> & {
     to_agent_id?: string | null;
+    recipient_agent_ids?: string[];
     payload: MessagePayload;
     within_ms?: number;
     limit?: number;
@@ -1155,7 +1181,8 @@ export class SqliteStore {
     const routeKey = computeMessageRouteKey({
       delivery_mode,
       from_agent_id,
-      to_agent_id
+      to_agent_id,
+      recipient_agent_ids
     });
     const rows = this.db
       .prepare(

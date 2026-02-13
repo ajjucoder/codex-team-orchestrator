@@ -54,7 +54,8 @@ export interface MessageEntityContract {
   team_id: string;
   from_agent_id: string;
   to_agent_id?: string;
-  delivery_mode: 'direct' | 'broadcast';
+  delivery_mode: 'direct' | 'broadcast' | 'group';
+  recipient_agent_ids?: string[];
   payload: MessagePayloadContract;
   idempotency_key: string;
   created_at: string;

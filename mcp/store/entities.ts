@@ -1,7 +1,7 @@
 export type TeamStatus = 'active' | 'idle' | 'paused' | 'finalized' | 'archived';
 export type TeamMode = 'default' | 'delegate' | 'plan';
 export type AgentStatus = 'idle' | 'busy' | 'offline';
-export type DeliveryMode = 'direct' | 'broadcast';
+export type DeliveryMode = 'direct' | 'broadcast' | 'group';
 export type TaskExecutionStatus =
   | 'queued'
   | 'dispatching'
@@ -172,6 +172,7 @@ export interface MessageRecord {
   from_agent_id: string;
   to_agent_id: string | null;
   delivery_mode: DeliveryMode;
+  recipient_agent_ids?: string[];
   payload: MessagePayload;
   idempotency_key: string;
   created_at: string;
