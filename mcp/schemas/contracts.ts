@@ -121,6 +121,16 @@ export interface ToolInputContracts {
   'team_child_start.schema.json': { team_id: string; objective: string; profile?: string; max_threads?: number; session_model?: string };
   'team_checkpoint_compact.schema.json': { team_id: string; keep_recent_messages?: number; keep_recent_events?: number; checkpoint_name?: string };
   'team_broadcast.schema.json': { team_id: string; from_agent_id: string; summary: string; idempotency_key: string; artifact_refs?: ArtifactRefContract[] };
+  'team_group_send.schema.json': {
+    team_id: string;
+    from_agent_id: string;
+    summary: string;
+    idempotency_key: string;
+    cwd?: string;
+    mentions?: string[];
+    recipient_agent_ids?: string[];
+    artifact_refs?: ArtifactRefContract[];
+  };
   'team_context_reset.schema.json': { team_id: string; checkpoint_artifact_id?: string; checkpoint_version?: number };
   'team_delegate_task.schema.json': { team_id: string; child_team_id: string; title: string; description?: string; required_role?: string; priority: number };
   'team_finalize.schema.json': { team_id: string; reason?: string };
@@ -180,6 +190,7 @@ export interface ToolOutputContracts {
   'team_start.schema.json': { ok: boolean; team?: TeamEntityContract; error?: string };
   'team_spawn.schema.json': { ok: boolean; agent?: AgentEntityContract; error?: string };
   'team_send.schema.json': { ok: boolean; inserted?: boolean; duplicate_suppressed?: boolean; error?: string };
+  'team_group_send.schema.json': { ok: boolean; inserted?: boolean; duplicate_suppressed?: boolean; error?: string };
   'team_task_create.schema.json': { ok: boolean; task?: TaskEntityContract; error?: string };
   'team_task_update.schema.json': { ok: boolean; task?: TaskEntityContract; error?: string };
   'team_task_claim.schema.json': { ok: boolean; task?: TaskEntityContract; error?: string };
@@ -225,6 +236,7 @@ export const TOOL_REQUIRED_FIELDS = {
   'team_child_start.schema.json': ['team_id', 'objective'],
   'team_checkpoint_compact.schema.json': ['team_id'],
   'team_broadcast.schema.json': ['team_id', 'from_agent_id', 'summary', 'idempotency_key'],
+  'team_group_send.schema.json': ['team_id', 'from_agent_id', 'summary', 'idempotency_key'],
   'team_context_reset.schema.json': ['team_id'],
   'team_delegate_task.schema.json': ['team_id', 'child_team_id', 'title', 'priority'],
   'team_finalize.schema.json': ['team_id'],

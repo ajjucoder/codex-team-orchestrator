@@ -3,6 +3,7 @@ import { newId } from '../ids.js';
 import { isKnownRole } from '../role-pack.js';
 import { resolvePermissionProfileName } from '../permission-profiles.js';
 import { scanForSecrets } from '../guardrails.js';
+import { resolveMentionRecipients } from '../mention-parser.js';
 import type { AgentRecord, ArtifactRef, MessageRecord, TeamRecord } from '../../store/entities.js';
 import type {
   WorkerAdapter,
@@ -62,7 +63,7 @@ interface DuplicateResponse extends ToolResult {
     team_id: string;
     from_agent_id: string;
     to_agent_id: string | null;
-    delivery_mode: 'direct' | 'broadcast';
+    delivery_mode: 'direct' | 'broadcast' | 'group';
     idempotency_key: string;
     payload: Record<string, unknown>;
   };
@@ -118,6 +119,21 @@ function readNumberList(input: Record<string, unknown>, key: string): number[] {
   return value
     .map((entry) => Number(entry))
     .filter((entry) => Number.isInteger(entry) && entry > 0);
+}
+
+function readStringList(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key];
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const normalized = entry.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function readBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
@@ -265,7 +281,10 @@ function diffArtifactRefs(currentRefs: ArtifactRef[] = [], previousRefs: Artifac
   return currentRefs.filter((ref) => !previousKeys.has(artifactRefKey(ref)));
 }
 
-function duplicateResponse(existingMessage: MessageRecord, mode: 'direct' | 'broadcast'): DuplicateResponse {
+function duplicateResponse(
+  existingMessage: MessageRecord,
+  mode: 'direct' | 'broadcast' | 'group'
+): DuplicateResponse {
   const base: DuplicateResponse = {
     ok: true,
     inserted: false,
@@ -841,6 +860,337 @@ export function registerAgentLifecycleTools(
         payload: result.message.payload
       },
       worker_delivery: workerDelivery
+    };
+  });
+
+  server.registerTool('team_group_send', 'team_group_send.schema.json', (input) => {
+    if (workerAdapterResolution.invalid_source) {
+      return invalidWorkerAdapterFailure(workerAdapterResolution.invalid_source, 'send_instruction');
+    }
+
+    const teamId = readString(input, 'team_id');
+    const fromAgentId = readString(input, 'from_agent_id');
+    const idempotencyKey = readString(input, 'idempotency_key');
+    const summary = String(input.summary ?? '');
+    const requestedCwd = readOptionalString(input, 'cwd');
+    const mentionInputs = readStringList(input, 'mentions');
+    const explicitRecipientAgentIds = readStringList(input, 'recipient_agent_ids');
+    const artifactRefs = readArtifactRefs(input);
+
+    const teamLookup = getTeamOrError(server, teamId);
+    if (teamLookup.error || !teamLookup.team) {
+      return { ok: false, error: teamLookup.error };
+    }
+    const fromLookup = getAgentOrError(server, fromAgentId);
+    if (fromLookup.error || !fromLookup.agent) {
+      return { ok: false, error: fromLookup.error };
+    }
+    const fromMembership = ensureAgentInTeam(fromLookup.agent, teamId, 'from_agent');
+    if (!fromMembership.ok) {
+      return fromMembership;
+    }
+
+    const teamPolicy = server.policyEngine?.resolveTeamPolicy(teamLookup.team) as GuardrailPolicy | undefined;
+    const payloadValidation = validateMessagePayload(summary, artifactRefs, teamPolicy ?? null);
+    if (!payloadValidation.ok) {
+      return payloadValidation;
+    }
+
+    const teamAgents = server.store.listAgentsByTeam(teamId);
+    const mentionResolution = resolveMentionRecipients({
+      summary,
+      mentions: mentionInputs,
+      explicit_recipient_agent_ids: explicitRecipientAgentIds,
+      agents: teamAgents,
+      sender_agent_id: fromAgentId
+    });
+    if (mentionResolution.unresolved_mentions.length > 0) {
+      return {
+        ok: false,
+        error: `unresolved mentions: ${mentionResolution.unresolved_mentions.join(', ')}`,
+        unresolved_mentions: mentionResolution.unresolved_mentions
+      };
+    }
+    const recipients = mentionResolution.recipient_agent_ids;
+    if (recipients.length === 0) {
+      return {
+        ok: false,
+        error: 'group send requires at least one resolved recipient',
+        unresolved_mentions: mentionResolution.unresolved_mentions
+      };
+    }
+
+    let effectiveArtifactRefs = artifactRefs;
+    let deltaApplied = false;
+    const previousRouteMessage = server.store.getLatestRouteMessage({
+      team_id: teamId,
+      from_agent_id: fromAgentId,
+      delivery_mode: 'group',
+      recipient_agent_ids: recipients
+    });
+    if (previousRouteMessage?.payload?.summary === summary) {
+      const deltaRefs = diffArtifactRefs(
+        effectiveArtifactRefs,
+        normalizeArtifactRefs(previousRouteMessage.payload.artifact_refs ?? [])
+      );
+      if (deltaRefs.length === 0) {
+        server.store.logEvent({
+          team_id: teamId,
+          agent_id: fromAgentId,
+          message_id: previousRouteMessage.message_id,
+          event_type: 'message_duplicate_suppressed',
+          payload: { delivery_mode: 'group', recipient_count: recipients.length }
+        });
+        const response = duplicateResponse(previousRouteMessage, 'group');
+        response.recipient_count = recipients.length;
+        return {
+          ...response,
+          recipient_agent_ids: recipients
+        };
+      }
+      if (deltaRefs.length < effectiveArtifactRefs.length) {
+        effectiveArtifactRefs = deltaRefs;
+        deltaApplied = true;
+      }
+    }
+
+    const duplicate = server.store.findRecentDuplicateMessage({
+      team_id: teamId,
+      from_agent_id: fromAgentId,
+      delivery_mode: 'group',
+      recipient_agent_ids: recipients,
+      payload: {
+        summary,
+        artifact_refs: effectiveArtifactRefs
+      },
+      within_ms: DUPLICATE_SUPPRESS_WINDOW_MS
+    });
+    if (duplicate) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: fromAgentId,
+        message_id: duplicate.message_id,
+        event_type: 'message_duplicate_suppressed',
+        payload: { delivery_mode: 'group', recipient_count: recipients.length }
+      });
+      const response = duplicateResponse(duplicate, 'group');
+      response.recipient_count = recipients.length;
+      return {
+        ...response,
+        recipient_agent_ids: recipients
+      };
+    }
+
+    const createdAt = nowIso();
+    const result = server.store.appendMessage({
+      message_id: newId('msg'),
+      team_id: teamId,
+      from_agent_id: fromAgentId,
+      to_agent_id: null,
+      delivery_mode: 'group',
+      payload: {
+        summary,
+        artifact_refs: effectiveArtifactRefs
+      },
+      idempotency_key: idempotencyKey,
+      created_at: createdAt,
+      recipient_agent_ids: recipients
+    });
+    if (deltaApplied && result.inserted) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: fromAgentId,
+        message_id: result.message.message_id,
+        event_type: 'message_delta_applied',
+        payload: {
+          delivery_mode: 'group',
+          recipient_count: recipients.length,
+          artifact_refs_reduced_to: effectiveArtifactRefs.length
+        }
+      });
+    }
+
+    const recipientById = new Map(teamAgents.map((agent) => [agent.agent_id, agent]));
+    const workerDeliveries: Array<{
+      agent_id: string;
+      worker_id: string;
+      instruction_id: string | null;
+      status: string | null;
+    }> = [];
+    const workerErrors: Array<{
+      agent_id: string;
+      worker_error: Record<string, unknown>;
+    }> = [];
+
+    if (result.inserted && workerAdapter) {
+      for (const recipientAgentId of recipients) {
+        const recipientWorkerSession = readPersistedWorkerSession(server, teamId, recipientAgentId);
+        if (!recipientWorkerSession) continue;
+        const recipientAgent = recipientById.get(recipientAgentId);
+        if (!recipientAgent) continue;
+
+        const assignment = gitManager.allocateForAgent({
+          team_id: teamId,
+          agent_id: recipientAgentId,
+          role: recipientAgent.role
+        });
+        if (!assignment.ok || !assignment.assignment) {
+          const assignmentError = String(
+            assignment.error ?? `failed to allocate git assignment for worker ${recipientAgentId}`
+          );
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: recipientAgentId,
+            lifecycle_state: 'failed',
+            metadata_patch: {
+              last_error_code: 'GIT_ASSIGNMENT_FAILED',
+              last_error_message: assignmentError
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
+          workerErrors.push({
+            agent_id: recipientAgentId,
+            worker_error: {
+              code: 'GIT_ASSIGNMENT_FAILED',
+              message: assignmentError,
+              retryable: false
+            }
+          });
+          continue;
+        }
+
+        const effectiveWorkerCwd = requestedCwd ?? assignment.assignment.worktree_path;
+        const guard = gitManager.assertWorkerContext({
+          team_id: teamId,
+          agent_id: recipientAgentId,
+          cwd: effectiveWorkerCwd
+        });
+        if (!guard.ok) {
+          const guardError = String(guard.error ?? 'worker command rejected by git isolation policy');
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: recipientAgentId,
+            lifecycle_state: 'failed',
+            metadata_patch: {
+              last_error_code: 'GIT_CONTEXT_REJECTED',
+              last_error_message: guardError
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
+          workerErrors.push({
+            agent_id: recipientAgentId,
+            worker_error: {
+              code: 'GIT_CONTEXT_REJECTED',
+              message: guardError,
+              retryable: false
+            }
+          });
+          continue;
+        }
+
+        const delivery = workerAdapter.sendInstruction({
+          worker_id: recipientWorkerSession.worker_id,
+          instruction: summary,
+          cwd: effectiveWorkerCwd,
+          idempotency_key: idempotencyKey,
+          artifact_refs: effectiveArtifactRefs,
+          metadata: {
+            team_id: teamId,
+            from_agent_id: fromAgentId,
+            to_agent_id: recipientAgentId,
+            delivery_mode: 'group'
+          }
+        });
+        if (!delivery.ok) {
+          server.store.updateWorkerRuntimeSessionState({
+            agent_id: recipientAgentId,
+            lifecycle_state: 'failed',
+            metadata_patch: {
+              last_error_code: String(delivery.error.code ?? ''),
+              last_error_message: String(delivery.error.message ?? '')
+            },
+            touch_seen: true,
+            team_id: teamId
+          });
+          workerErrors.push({
+            agent_id: recipientAgentId,
+            worker_error: delivery.error
+          });
+          continue;
+        }
+
+        const workerDelivery = delivery.data;
+        server.store.updateWorkerRuntimeSessionState({
+          agent_id: recipientAgentId,
+          lifecycle_state: 'active',
+          metadata_patch: {
+            last_instruction_id: workerDelivery.instruction_id ?? null,
+            last_delivery_status: workerDelivery.status ?? null
+          },
+          touch_seen: true,
+          team_id: teamId
+        });
+        workerDeliveries.push({
+          agent_id: recipientAgentId,
+          worker_id: recipientWorkerSession.worker_id,
+          instruction_id: workerDelivery.instruction_id ?? null,
+          status: workerDelivery.status ?? null
+        });
+        server.store.logEvent({
+          team_id: teamId,
+          agent_id: recipientAgentId,
+          message_id: result.message.message_id,
+          event_type: 'worker_instruction_dispatched',
+          payload: {
+            delivery_mode: 'group',
+            from_agent_id: fromAgentId,
+            to_agent_id: recipientAgentId,
+            summary_length: summary.length,
+            artifact_refs_count: effectiveArtifactRefs.length,
+            worker_delivery_status: workerDelivery.status ?? null,
+            worker_instruction_id: workerDelivery.instruction_id ?? null
+          }
+        });
+      }
+    }
+
+    if (result.inserted) {
+      server.store.logEvent({
+        team_id: teamId,
+        agent_id: fromAgentId,
+        message_id: result.message.message_id,
+        event_type: 'worker_group_instruction_dispatch_summary',
+        payload: {
+          delivery_mode: 'group',
+          recipient_count: recipients.length,
+          worker_dispatch_count: workerDeliveries.length,
+          worker_error_count: workerErrors.length,
+          summary_length: summary.length,
+          artifact_refs_count: effectiveArtifactRefs.length
+        }
+      });
+    }
+
+    return {
+      ok: true,
+      inserted: result.inserted,
+      duplicate_suppressed: false,
+      delta_applied: deltaApplied,
+      recipient_count: recipients.length,
+      recipient_agent_ids: recipients,
+      parsed_mentions: mentionResolution.parsed_mentions.map((mention) => mention.raw),
+      unresolved_mentions: mentionResolution.unresolved_mentions,
+      message: {
+        message_id: result.message.message_id,
+        team_id: result.message.team_id,
+        from_agent_id: result.message.from_agent_id,
+        to_agent_id: result.message.to_agent_id,
+        delivery_mode: result.message.delivery_mode,
+        idempotency_key: result.message.idempotency_key,
+        payload: result.message.payload
+      },
+      worker_deliveries: workerDeliveries,
+      worker_errors: workerErrors
     };
   });
 
