@@ -8,9 +8,9 @@ Worker Model Policy: same as lead
 
 ## Completion Snapshot
 
-- `Overall`: `11/17 (64.7%)`
+- `Overall`: `12/17 (70.6%)`
 - `P0`: `7/7 (100.0%)`
-- `P1`: `4/6 (66.7%)`
+- `P1`: `5/6 (83.3%)`
 - `P2`: `0/4 (0.0%)`
 
 Formula:
@@ -46,8 +46,8 @@ Formula:
 | `ATX-P1-002` | P1 | done | `mcp/server/mention-parser.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_group_send.schema.json`, `mcp/schemas/contracts.ts`, `tests/unit/v4-007.mention-parser.test.ts`, `tests/unit/v4-008.team-group-send.test.ts`, `tests/integration/v4-007.group-send.integration.test.ts` | `T-ATX-P1-002` | pass (`npm run test:unit:ts -- tests/unit/v4-007.mention-parser.test.ts tests/unit/v4-008.team-group-send.test.ts`; `npm run test:integration:ts -- tests/integration/v4-007.group-send.integration.test.ts`) | `da9c4a1ccbab5492d1bee35118cdd5e976ee10d9` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-003` | P1 | done | `mcp/store/migrations/011_agent_decision_reports.sql`, `mcp/store/entities.ts`, `mcp/store/sqlite-store.ts`, `mcp/server/decision-tracker.ts`, `mcp/server/tools/agent-lifecycle.ts`, `mcp/schemas/tools/team_agent_report.schema.json`, `mcp/schemas/contracts.ts`, `scripts/team-card.ts`, `tests/unit/v4-009.decision-reports.test.ts`, `tests/integration/v4-008.decision-reports.integration.test.ts` | `T-ATX-P1-003` | pass (`npm run test:unit:ts -- tests/unit/v4-009.decision-reports.test.ts`; `npm run test:integration:ts -- tests/integration/v4-008.decision-reports.integration.test.ts`) | `3884ec48d2d7e2b3b59f26596be104fbab30c250` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
 | `ATX-P1-004` | P1 | done | `mcp/schemas/contracts.ts`, `mcp/schemas/tools/team_spawn.schema.json`, `mcp/server/staffing-planner.ts`, `mcp/server/tools/agent-lifecycle.ts`, `profiles/default.team.yaml`, `profiles/fast.team.yaml`, `profiles/deep.team.yaml`, `tests/unit/v4-010.model-routing-compat.test.ts`, `tests/integration/v4-009.model-routing-compat.integration.test.ts` | `T-ATX-P1-004` | pass (`npm run test:unit:ts -- tests/unit/v4-010.model-routing-compat.test.ts tests/unit/v3-109.staffing-planner.test.ts`; `npm run test:integration:ts -- tests/integration/v4-009.model-routing-compat.integration.test.ts`) | `1cdc0d6b7b8531536d078519984fb37dbabc592f` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
-| `ATX-P1-005` | P1 | in_progress | pending | `T-ATX-P1-005` | pending | pending | pending | pending |
-| `ATX-P1-006` | P1 | todo | pending | `T-ATX-P1-006` | pending | pending | pending | pending |
+| `ATX-P1-005` | P1 | done | `mcp/runtime/transport-factory.ts`, `mcp/server/index.ts`, `tests/unit/v4-011.transport-factory.test.ts`, `tests/unit/v4-012.headless-transport.test.ts`, `tests/integration/v4-010.transport-fallback.integration.test.ts` | `T-ATX-P1-005` | pass (`npm run test:unit:ts -- tests/unit/v4-011.transport-factory.test.ts tests/unit/v4-012.headless-transport.test.ts`; `npm run test:integration:ts -- tests/integration/v4-010.transport-fallback.integration.test.ts`) | `54ca1787bd97f3d77585878e1850ac9e19b4b6d0` | `feature/atx-agent-teams-e2e` | `https://github.com/ajjucoder/codex-team-orchestrator-private/pull/5` |
+| `ATX-P1-006` | P1 | in_progress | pending | `T-ATX-P1-006` | pending | pending | pending | pending |
 | `ATX-P2-001` | P2 | todo | pending | `T-ATX-P2-001` | pending | pending | pending | pending |
 | `ATX-P2-002` | P2 | todo | pending | `T-ATX-P2-002` | pending | pending | pending | pending |
 | `ATX-P2-003` | P2 | todo | pending | `T-ATX-P2-003` | pending | pending | pending | pending |
@@ -84,6 +84,8 @@ A ticket may be marked `done` only if all are present:
 - `npm run test:integration:ts -- tests/integration/v4-008.decision-reports.integration.test.ts` -> pass (ticket `ATX-P1-003`)
 - `npm run test:unit:ts -- tests/unit/v4-010.model-routing-compat.test.ts tests/unit/v3-109.staffing-planner.test.ts` -> pass (ticket `ATX-P1-004`)
 - `npm run test:integration:ts -- tests/integration/v4-009.model-routing-compat.integration.test.ts` -> pass (ticket `ATX-P1-004`)
+- `npm run test:unit:ts -- tests/unit/v4-011.transport-factory.test.ts tests/unit/v4-012.headless-transport.test.ts` -> pass (ticket `ATX-P1-005`)
+- `npm run test:integration:ts -- tests/integration/v4-010.transport-fallback.integration.test.ts` -> pass (ticket `ATX-P1-005`)
 
 ## Blockers
 
@@ -91,6 +93,6 @@ A ticket may be marked `done` only if all are present:
 
 ## Next Actions
 
-1. Execute `ATX-P1-005` transport factory + fallback.
-2. Execute `ATX-P1-006` replay/parser hardening.
+1. Execute `ATX-P1-006` separate tmux sidecar UI.
+2. Execute `ATX-P2-001` DAG performance hardening.
 3. Run linked tests per ticket and update this tracker after each status transition.
